@@ -1,0 +1,246 @@
+import { useEffect, useState, useRef } from "react";
+import { useGetMiner, useMinerTick, useMaintainMiner, useUpgradeMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
+import { motion } from "framer-motion";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle } from "lucide-react";
+
+export default function Miner() {
+  const { data: miner, refetch } = useGetMiner();
+  const minerTick = useMinerTick();
+  const maintainMiner = useMaintainMiner();
+  const upgradeMiner = useUpgradeMiner();
+  const requestMonetization = useRequestMonetizationTask();
+  const verifyMonetization = useVerifyMonetizationTask();
+  const { toast } = useToast();
+
+  const [localBalance, setLocalBalance] = useState<number>(0);
+  const [adTimer, setAdTimer] = useState<number | null>(null);
+  const [adToken, setAdToken] = useState<string | null>(null);
+
+  // Sync initial
+  useEffect(() => {
+    if (miner) setLocalBalance(miner.currentBalance);
+  }, [miner]);
+
+  // Local Ticker for visual effect
+  useEffect(() => {
+    if (!miner || !miner.isRunning) return;
+    
+    const interval = setInterval(() => {
+      setLocalBalance(prev => prev + ((miner.ratePerSecond || 0) / 10)); // runs every 100ms
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [miner]);
+
+  // Server Tick every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      minerTick.mutate(undefined, {
+        onSuccess: (data) => {
+          setLocalBalance(data.currentBalance);
+          refetch();
+        }
+      });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [minerTick, refetch]);
+
+  // Ad Timer logic
+  useEffect(() => {
+    if (adTimer !== null && adTimer > 0) {
+      const t = setTimeout(() => setAdTimer(adTimer - 1), 1000);
+      return () => clearTimeout(t);
+    } else if (adTimer === 0 && adToken) {
+      // Verify
+      verifyMonetization.mutate({ data: { token: adToken } }, {
+        onSuccess: (res) => {
+          if(res.success) {
+             toast({ title: "BOOST APPLIED", description: res.reward, className: "bg-black border-primary text-primary font-mono uppercase" });
+             refetch();
+          }
+        }
+      });
+      setAdTimer(null);
+      setAdToken(null);
+    }
+    return undefined;
+  }, [adTimer, adToken, verifyMonetization, refetch, toast]);
+
+  const handleMaintenance = (type: "flush_cooling" | "thermal_paste") => {
+    maintainMiner.mutate({ data: { type } }, {
+      onSuccess: () => {
+        toast({ title: "MAINTENANCE COMPLETE", description: "Systems stabilized.", className: "bg-black border-accent text-accent font-mono uppercase" });
+        refetch();
+      },
+      onError: (err: any) => {
+        toast({ title: "MAINTENANCE FAILED", description: err?.data?.message || "Missing resources.", variant: "destructive" });
+      }
+    });
+  };
+
+  const handleMonetization = (type: "drill_boost" | "cool_down") => {
+    requestMonetization.mutate({ data: { type } }, {
+      onSuccess: (res) => {
+        if(res.success) {
+          window.open(res.adUrl || "https://example.com/ad", "_blank");
+          setAdToken(res.token);
+          setAdTimer(15);
+        }
+      }
+    });
+  };
+
+  if (!miner) return <div className="p-8 text-center text-primary font-mono animate-pulse">Initializing Data Center...</div>;
+
+  const tempColor = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
+  const isOverheated = miner.temperature >= 100;
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto font-mono">
+      
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-primary tracking-tighter uppercase drop-shadow-[0_0_8px_rgba(34,197,94,0.5)] flex items-center">
+            <Server className="mr-3 w-8 h-8" /> Data Center Core
+          </h1>
+          <p className="text-muted-foreground text-sm tracking-widest uppercase mt-1">Passive Generation Engine</p>
+        </div>
+        <Badge variant="outline" className={`px-3 py-1 border ${miner.isRunning ? "border-primary text-primary" : "border-destructive text-destructive"} uppercase tracking-widest`}>
+          {miner.isRunning ? (isOverheated ? "OVERHEATED" : "ONLINE") : "OFFLINE"}
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        {/* Balance Display */}
+        <Card className="md:col-span-2 border-primary/30 bg-black/60 shadow-[0_0_30px_rgba(0,0,0,0.8)] relative overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none opacity-10 bg-[linear-gradient(transparent_50%,rgba(0,0,0,1)_50%)] bg-[length:100%_4px]" />
+          <CardHeader>
+            <CardTitle className="text-muted-foreground uppercase text-xs tracking-widest flex items-center">
+              <Activity className="w-4 h-4 mr-2" /> Live Yield
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center py-8">
+            <div className="text-5xl md:text-7xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
+              ${localBalance.toFixed(10)}
+            </div>
+            <div className="mt-4 text-muted-foreground text-sm uppercase tracking-widest">
+              Rate: {miner.ratePerSecond} sats/sec
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Temperature Gauge */}
+        <Card className={`border ${isOverheated ? "border-destructive/80 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.4)]" : "border-border"} bg-black/60`}>
+          <CardHeader>
+            <CardTitle className="text-muted-foreground uppercase text-xs tracking-widest flex items-center">
+              <Thermometer className="w-4 h-4 mr-2" /> Core Temp
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex flex-col items-center">
+              <div className={`text-5xl font-black tracking-tighter tabular-nums ${tempColor}`}>
+                {Math.round(miner.temperature)}°C
+              </div>
+              <Progress value={miner.temperature} className={`h-2 mt-4 ${isOverheated ? "bg-destructive/20" : ""}`} />
+            </div>
+
+            <div className="space-y-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full border-accent text-accent hover:bg-accent hover:text-black uppercase tracking-widest text-xs"
+                onClick={() => handleMaintenance("flush_cooling")}
+                disabled={maintainMiner.isPending}
+              >
+                <Snowflake className="w-3 h-3 mr-2" /> Flush Cooling (1 Bucket)
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="w-full border-muted-foreground text-muted-foreground hover:text-white uppercase tracking-widest text-xs"
+                onClick={() => handleMaintenance("thermal_paste")}
+                disabled={maintainMiner.isPending}
+              >
+                <Cpu className="w-3 h-3 mr-2" /> Apply Thermal Paste
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Stats & Upgrade */}
+        <Card className="border-border bg-sidebar/50">
+          <CardHeader>
+            <CardTitle className="text-white uppercase text-sm tracking-widest">System Specifications</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest">Rig Level</span>
+              <Badge variant="outline" className="border-primary text-primary font-bold">LVL {miner.level}</Badge>
+            </div>
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest">Solar Arrays</span>
+              <span className="text-white font-bold">{miner.solarPanels}</span>
+            </div>
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest">Generators</span>
+              <span className="text-white font-bold">{miner.generators}</span>
+            </div>
+            
+            <Button 
+              className="w-full bg-primary/20 text-primary border border-primary hover:bg-primary hover:text-black uppercase tracking-widest font-bold mt-4"
+              onClick={() => upgradeMiner.mutate(undefined, { onSuccess: () => refetch() })}
+              disabled={upgradeMiner.isPending}
+            >
+              <ArrowUpCircle className="w-4 h-4 mr-2" /> Upgrade Rig (Gems)
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Monetization Actions */}
+        <Card className="border-accent/30 bg-accent/5">
+          <CardHeader>
+            <CardTitle className="text-accent uppercase text-sm tracking-widest flex items-center">
+              <Zap className="w-4 h-4 mr-2" /> External Overrides
+            </CardTitle>
+            <CardDescription className="text-muted-foreground text-xs uppercase tracking-widest">Execute sponsored tasks for system boosts</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {adTimer !== null ? (
+               <div className="bg-black/50 p-6 rounded border border-accent/50 text-center space-y-4">
+                 <div className="text-accent text-sm uppercase tracking-widest">Verifying Connection...</div>
+                 <div className="text-4xl font-black text-white">{adTimer}s</div>
+                 <Progress value={(15 - adTimer) / 15 * 100} className="h-1 bg-accent/20" />
+               </div>
+            ) : (
+              <>
+                <Button 
+                  className="w-full bg-accent/10 text-accent border border-accent hover:bg-accent hover:text-black uppercase tracking-widest h-12"
+                  onClick={() => handleMonetization("drill_boost")}
+                  disabled={requestMonetization.isPending}
+                >
+                  <Zap className="w-4 h-4 mr-2" /> Overcharge Drill (15s Ad)
+                </Button>
+                <Button 
+                  className="w-full bg-accent/10 text-accent border border-accent hover:bg-accent hover:text-black uppercase tracking-widest h-12"
+                  onClick={() => handleMonetization("cool_down")}
+                  disabled={requestMonetization.isPending}
+                >
+                  <Snowflake className="w-4 h-4 mr-2" /> Flash Cool Down (15s Ad)
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+    </motion.div>
+  );
+}

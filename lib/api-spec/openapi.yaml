@@ -1,22 +1,38 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: MineVault Game API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: world
+    description: Game world
+  - name: game
+    description: Game actions
+  - name: miner
+    description: Data center miner
+  - name: wallet
+    description: Wallet & balance
+  - name: inventory
+    description: Inventory & crafting
+  - name: store
+    description: Item store
+  - name: leaderboard
+    description: Leaderboard
+  - name: monetization
+    description: Ad task monetization
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +40,346 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "200":
+          description: Registration result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResult"
+        "400":
+          description: Bad request
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthInput"
+      responses:
+        "200":
+          description: Login result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResult"
+        "401":
+          description: Unauthorized
+
+  /world/{name}:
+    get:
+      operationId: getWorld
+      tags: [world]
+      summary: Get or create a world
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: World data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/World"
+
+  /game/action:
+    post:
+      operationId: gameAction
+      tags: [game]
+      summary: Perform a game action (break block, place block)
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameActionInput"
+      responses:
+        "200":
+          description: Action result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GameActionResult"
+        "400":
+          description: Invalid action
+
+  /miner:
+    get:
+      operationId: getMiner
+      tags: [miner]
+      summary: Get current miner state
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Miner state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Miner"
+
+  /miner/tick:
+    post:
+      operationId: minerTick
+      tags: [miner]
+      summary: Server-side tick to update miner balance and temperature
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Updated miner state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Miner"
+
+  /miner/upgrade:
+    post:
+      operationId: upgradeMiner
+      tags: [miner]
+      summary: Upgrade miner level
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Upgraded miner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Miner"
+        "400":
+          description: Not enough funds
+
+  /miner/maintain:
+    post:
+      operationId: maintainMiner
+      tags: [miner]
+      summary: Apply maintenance (flush cooling / thermal paste)
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaintainInput"
+      responses:
+        "200":
+          description: Maintained miner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Miner"
+
+  /wallet:
+    get:
+      operationId: getWallet
+      tags: [wallet]
+      summary: Get current wallet
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Wallet state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+
+  /inventory:
+    get:
+      operationId: getInventory
+      tags: [inventory]
+      summary: Get user inventory
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Inventory items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InventoryItem"
+
+  /store:
+    get:
+      operationId: getStore
+      tags: [store]
+      summary: List store items
+      responses:
+        "200":
+          description: Store items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StoreItem"
+
+  /store/buy:
+    post:
+      operationId: buyItem
+      tags: [store]
+      summary: Buy an item from the store
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuyItemInput"
+      responses:
+        "200":
+          description: Purchase result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchaseResult"
+        "400":
+          description: Purchase failed
+
+  /leaderboard:
+    get:
+      operationId: getLeaderboard
+      tags: [leaderboard]
+      summary: Get top players leaderboard
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaderboardEntry"
+
+  /pool-status:
+    get:
+      operationId: getPoolStatus
+      tags: [leaderboard]
+      summary: Get current revenue pool status
+      responses:
+        "200":
+          description: Pool status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolStatus"
+
+  /monetization/request-task:
+    post:
+      operationId: requestMonetizationTask
+      tags: [monetization]
+      summary: Start an ad task (drill boost or cool down)
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonetizationTaskInput"
+      responses:
+        "200":
+          description: Task started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonetizationTaskResult"
+
+  /monetization/verify-task:
+    post:
+      operationId: verifyMonetizationTask
+      tags: [monetization]
+      summary: Verify ad task completion and claim reward
+      parameters:
+        - in: header
+          name: x-user-id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyTaskInput"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyTaskResult"
+        "400":
+          description: Task not ready or invalid
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +390,255 @@ components:
       required:
         - status
 
+    AuthInput:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+        password:
+          type: string
+          minLength: 6
+
+    AuthResult:
+      type: object
+      required: [success, userId, username]
+      properties:
+        success:
+          type: boolean
+        userId:
+          type: integer
+        username:
+          type: string
+
+    World:
+      type: object
+      required: [id, name, ownerId, blockData]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        ownerId:
+          type: ["integer", "null"]
+        blockData:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+
+    GameActionInput:
+      type: object
+      required: [actionType, worldName, x, y]
+      properties:
+        actionType:
+          type: string
+          enum: [break, place]
+        worldName:
+          type: string
+        x:
+          type: integer
+        y:
+          type: integer
+        activeTool:
+          type: ["string", "null"]
+        placeBlock:
+          type: ["string", "null"]
+
+    GameActionResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        gemsGained:
+          type: ["integer", "null"]
+        pointsAwarded:
+          type: ["number", "null"]
+        dropItem:
+          type: ["string", "null"]
+        currentActions:
+          type: ["integer", "null"]
+        fatigueLevel:
+          type: ["string", "null"]
+        wizardChallenge:
+          type: ["boolean", "null"]
+
+    Miner:
+      type: object
+      required: [userId, level, currentBalance, temperature, isRunning, solarPanels, generators, fuel, lastMaintenanceAt, lastTickAt]
+      properties:
+        userId:
+          type: integer
+        level:
+          type: integer
+        unlocked:
+          type: boolean
+        currentBalance:
+          type: number
+        temperature:
+          type: number
+        isRunning:
+          type: boolean
+        solarPanels:
+          type: integer
+        generators:
+          type: integer
+        fuel:
+          type: integer
+        lastMaintenanceAt:
+          type: string
+        lastTickAt:
+          type: string
+        ratePerSecond:
+          type: number
+
+    MaintainInput:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [flush_cooling, thermal_paste]
+
+    Wallet:
+      type: object
+      required: [userId, gems, worldLocks, diamondLocks, realBalance, windowPoints, actionCount]
+      properties:
+        userId:
+          type: integer
+        gems:
+          type: integer
+        worldLocks:
+          type: integer
+        diamondLocks:
+          type: integer
+        realBalance:
+          type: number
+        windowPoints:
+          type: number
+        actionCount:
+          type: integer
+
+    InventoryItem:
+      type: object
+      required: [itemId, quantity]
+      properties:
+        itemId:
+          type: string
+        quantity:
+          type: integer
+        displayName:
+          type: string
+        category:
+          type: string
+
+    StoreItem:
+      type: object
+      required: [itemId, displayName, gemCost, category, description]
+      properties:
+        itemId:
+          type: string
+        displayName:
+          type: string
+        gemCost:
+          type: integer
+        realCost:
+          type: ["number", "null"]
+        category:
+          type: string
+        description:
+          type: string
+
+    BuyItemInput:
+      type: object
+      required: [itemId, quantity]
+      properties:
+        itemId:
+          type: string
+        quantity:
+          type: integer
+
+    PurchaseResult:
+      type: object
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        newGemBalance:
+          type: ["integer", "null"]
+
+    LeaderboardEntry:
+      type: object
+      required: [rank, username, gems, windowPoints, minerLevel]
+      properties:
+        rank:
+          type: integer
+        username:
+          type: string
+        gems:
+          type: integer
+        windowPoints:
+          type: number
+        minerLevel:
+          type: integer
+        realBalance:
+          type: number
+
+    PoolStatus:
+      type: object
+      required: [currentPool, nextPayoutIn, houseCut, userCut]
+      properties:
+        currentPool:
+          type: number
+        nextPayoutIn:
+          type: integer
+        houseCut:
+          type: number
+        userCut:
+          type: number
+        totalWindowPoints:
+          type: number
+
+    MonetizationTaskInput:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [drill_boost, cool_down]
+
+    MonetizationTaskResult:
+      type: object
+      required: [success, token, expiresAt]
+      properties:
+        success:
+          type: boolean
+        token:
+          type: string
+        expiresAt:
+          type: string
+        adUrl:
+          type: string
+
+    VerifyTaskInput:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+
+    VerifyTaskResult:
+      type: object
+      required: [success, reward]
+      properties:
+        success:
+          type: boolean
+        reward:
+          type: string
+        message:
+          type: string

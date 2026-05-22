@@ -358,6 +358,11 @@ export async function customFetch<T = unknown>(
     }
   }
 
+  const userId = localStorage.getItem("userId");
+  if (userId && !headers.has("x-user-id")) {
+    headers.set("x-user-id", userId);
+  }
+
   const requestInfo = { method, url: resolveUrl(input) };
 
   const response = await fetch(input, { ...init, method, headers });
