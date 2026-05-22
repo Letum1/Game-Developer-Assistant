@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle } from "lucide-react";
+import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer } from "lucide-react";
+import { Link } from "wouter";
 
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
@@ -95,7 +96,41 @@ export default function Miner() {
     });
   };
 
-  if (!miner) return <div className="p-8 text-center text-primary font-mono animate-pulse">Initializing Data Center...</div>;
+  if (!miner) return <div className="p-8 text-center text-primary font-mono animate-pulse">Connecting to Data Center...</div>;
+
+  if (!miner.unlocked) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full p-8 font-mono space-y-6 text-center">
+        <div className="border border-border rounded-xl p-10 bg-black/60 max-w-md space-y-6 shadow-[0_0_40px_rgba(0,0,0,0.8)]">
+          <Server className="w-16 h-16 text-muted-foreground mx-auto opacity-40" />
+          <div>
+            <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Data Center Locked</h2>
+            <p className="text-muted-foreground text-sm mt-2 leading-relaxed">
+              You need to build a <span className="text-primary font-bold">Data Center Rig</span> before you can start earning passive income.
+            </p>
+          </div>
+          <div className="bg-black/50 border border-border rounded p-3 text-xs text-left space-y-1">
+            <p className="text-muted-foreground uppercase tracking-widest text-[10px] mb-2">Required to craft:</p>
+            <div className="flex justify-between"><span className="text-gray-400">Raw Iron</span><span className="text-primary font-bold">×5</span></div>
+            <div className="flex justify-between"><span className="text-yellow-500">Raw Gold</span><span className="text-primary font-bold">×3</span></div>
+            <div className="flex justify-between"><span className="text-cyan-400">Raw Diamond</span><span className="text-primary font-bold">×1</span></div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Link href="/craft">
+              <Button className="w-full bg-primary/20 border border-primary text-primary hover:bg-primary hover:text-black font-bold uppercase tracking-widest">
+                <Hammer className="w-4 h-4 mr-2" /> Go to Workbench
+              </Button>
+            </Link>
+            <Link href="/game">
+              <Button variant="outline" className="w-full border-border text-muted-foreground hover:text-white font-bold uppercase tracking-widest text-xs">
+                Mine Resources First
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
 
   const tempColor = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;

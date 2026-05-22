@@ -148,6 +148,17 @@ export interface PoolStatus {
   totalWindowPoints?: number;
 }
 
+export interface CraftInput {
+  recipe: string;
+}
+
+export interface CraftResult {
+  success: boolean;
+  message: string;
+  result?: string;
+  unlocksMiner?: boolean;
+}
+
 export type MonetizationTaskInputType = typeof MonetizationTaskInputType[keyof typeof MonetizationTaskInputType];
 
 

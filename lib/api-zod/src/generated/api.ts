@@ -294,6 +294,25 @@ export const GetPoolStatusResponse = zod.object({
 
 
 /**
+ * @summary Craft an item using resources from inventory
+ */
+export const CraftItemHeader = zod.object({
+  "x-user-id": zod.string()
+})
+
+export const CraftItemBody = zod.object({
+  "recipe": zod.string()
+})
+
+export const CraftItemResponse = zod.object({
+  "success": zod.boolean(),
+  "message": zod.string(),
+  "result": zod.string().optional(),
+  "unlocksMiner": zod.boolean().optional()
+})
+
+
+/**
  * @summary Start an ad task (drill boost or cool down)
  */
 export const RequestMonetizationTaskHeader = zod.object({

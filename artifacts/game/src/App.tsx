@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import Auth from "@/pages/Auth";
 import Game from "@/pages/Game";
 import Miner from "@/pages/Miner";
+import Craft from "@/pages/Craft";
 import Inventory from "@/pages/Inventory";
 import Store from "@/pages/Store";
 import Leaderboard from "@/pages/Leaderboard";
@@ -20,6 +21,9 @@ function Router() {
       <Route path="/" component={Auth} />
       <Route path="/game">
         <Layout><Game /></Layout>
+      </Route>
+      <Route path="/craft">
+        <Layout><Craft /></Layout>
       </Route>
       <Route path="/miner">
         <Layout><Miner /></Layout>

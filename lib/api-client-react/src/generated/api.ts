@@ -23,6 +23,8 @@ import type {
   AuthInput,
   AuthResult,
   BuyItemInput,
+  CraftInput,
+  CraftResult,
   GameActionInput,
   GameActionResult,
   HealthStatus,
@@ -1163,6 +1165,77 @@ export function useGetPoolStatus<TData = Awaited<ReturnType<typeof getPoolStatus
 
 
 
+
+export const getCraftItemUrl = () => {
+
+
+
+
+  return `/api/inventory/craft`
+}
+
+/**
+ * @summary Craft an item using resources from inventory
+ */
+export const craftItem = async (craftInput: CraftInput, options?: RequestInit): Promise<CraftResult> => {
+
+  return customFetch<CraftResult>(getCraftItemUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      craftInput,)
+  }
+);}
+
+
+
+
+export const getCraftItemMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof craftItem>>, TError,{data: BodyType<CraftInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof craftItem>>, TError,{data: BodyType<CraftInput>}, TContext> => {
+
+const mutationKey = ['craftItem'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof craftItem>>, {data: BodyType<CraftInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  craftItem(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CraftItemMutationResult = NonNullable<Awaited<ReturnType<typeof craftItem>>>
+    export type CraftItemMutationBody = BodyType<CraftInput>
+    export type CraftItemMutationError = ErrorType<void>
+
+    /**
+ * @summary Craft an item using resources from inventory
+ */
+export const useCraftItem = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof craftItem>>, TError,{data: BodyType<CraftInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof craftItem>>,
+        TError,
+        {data: BodyType<CraftInput>},
+        TContext
+      > => {
+      return useMutation(getCraftItemMutationOptions(options));
+    }
 
 export const getRequestMonetizationTaskUrl = () => {
 

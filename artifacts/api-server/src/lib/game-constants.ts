@@ -56,6 +56,7 @@ export const STORE_ITEMS = [
 ];
 
 export const ITEM_DISPLAY_NAMES: Record<string, string> = {
+  data_center_rig: "Data Center Rig",
   pickaxe_wood:    "Wood Pickaxe",
   pickaxe_stone:   "Stone Pickaxe",
   pickaxe_iron:    "Iron Pickaxe",
@@ -77,7 +78,68 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   diamond_lock:    "Diamond Lock",
 };
 
+export const CRAFTING_RECIPES: Record<string, {
+  displayName: string;
+  description: string;
+  ingredients: { itemId: string; quantity: number }[];
+  result: string;
+  resultQty: number;
+  unlocksMiner?: boolean;
+}> = {
+  data_center_rig: {
+    displayName: "Data Center Rig",
+    description: "The foundation of your passive earning machine. Unlocks the Data Center Miner.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 5 },
+      { itemId: "raw_gold", quantity: 3 },
+      { itemId: "raw_diamond", quantity: 1 },
+    ],
+    result: "data_center_rig",
+    resultQty: 1,
+    unlocksMiner: true,
+  },
+  generator: {
+    displayName: "Diesel Generator",
+    description: "Provides backup power for your Data Center.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 3 },
+      { itemId: "raw_gold", quantity: 1 },
+    ],
+    result: "generator",
+    resultQty: 1,
+  },
+  solar_panel: {
+    displayName: "Solar Panel",
+    description: "Renewable energy for your Data Center.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 2 },
+      { itemId: "raw_gold", quantity: 1 },
+    ],
+    result: "solar_panel",
+    resultQty: 1,
+  },
+  water_bucket: {
+    displayName: "Water Bucket",
+    description: "Flush cooling water to reset temperature.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 1 },
+    ],
+    result: "water_bucket",
+    resultQty: 1,
+  },
+  thermal_paste: {
+    displayName: "Thermal Paste",
+    description: "Apply to reduce miner temperature.",
+    ingredients: [
+      { itemId: "raw_gold", quantity: 1 },
+    ],
+    result: "thermal_paste",
+    resultQty: 1,
+  },
+};
+
 export const ITEM_CATEGORIES: Record<string, string> = {
+  data_center_rig: "machines",
   pickaxe_wood:    "tools",
   pickaxe_stone:   "tools",
   pickaxe_iron:    "tools",
