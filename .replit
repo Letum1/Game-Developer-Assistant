@@ -29,7 +29,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=23242 BASE_PATH=/ pnpm --filter @workspace/mining-game run build && pnpm --filter @workspace/api-server run build && PORT=8080 NODE_ENV=production pnpm --filter @workspace/api-server run start"
+args = "PORT=8080 NODE_ENV=production pnpm --filter @workspace/api-server run start"
 waitForPort = 8080
 
 [agent]
