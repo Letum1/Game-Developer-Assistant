@@ -3,6 +3,11 @@ import { pool } from "../lib/db-pool";
 import { GetWorldParams, GetWorldHeader } from "@workspace/api-zod";
 import { WORLD_WIDTH, WORLD_HEIGHT } from "../lib/game-constants";
 
+// ─── World Expand constants ────────────────────────────────────────────────────
+// Each expansion adds this many columns to the right side of the world.
+const EXPAND_COLS     = 5;
+const EXPAND_GEM_COST = 200;   // gems to pay per expansion
+
 const router: IRouter = Router();
 
 // ============================================================
@@ -152,6 +157,101 @@ router.get("/world/:name", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "World fetch error");
     res.status(500).json({ error: "World error" });
+  }
+});
+
+// ============================================================
+// POST /world/expand
+// Costs EXPAND_GEM_COST gems. Appends EXPAND_COLS new terrain columns
+// to the right edge of the named world so the player can mine further.
+// ============================================================
+router.post("/world/expand", async (req, res) => {
+  // Auth: need the user's id from the request header
+  const headerParsed = GetWorldHeader.safeParse(req.headers);
+  if (!headerParsed.success) {
+    res.status(401).json({ error: "Missing user id" });
+    return;
+  }
+  const userId = parseInt(headerParsed.data["x-user-id"]);
+
+  // Body: which world to expand
+  const worldName: string = (req.body as { worldName?: string })?.worldName ?? "start";
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // ── Check gems ──────────────────────────────────────────────────────────
+    const walletRes = await client.query(
+      "SELECT gems FROM wallets WHERE user_id=$1 FOR UPDATE", [userId]
+    );
+    if (walletRes.rows.length === 0 || walletRes.rows[0].gems < EXPAND_GEM_COST) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ success: false, error: `Need ${EXPAND_GEM_COST} gems to expand world` });
+      return;
+    }
+
+    // ── Load world ──────────────────────────────────────────────────────────
+    const worldRes = await client.query(
+      "SELECT * FROM worlds WHERE name=$1 FOR UPDATE", [worldName]
+    );
+    if (worldRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ success: false, error: "World not found" });
+      return;
+    }
+
+    const grid: string[][] = worldRes.rows[0].block_data;
+    const h = grid.length;
+
+    // ── Generate new columns using the same terrain rules as the generator ──
+    // Each new column mirrors the layering: sky → grass → dirt/iron → rock/gold → deep
+    for (let ci = 0; ci < EXPAND_COLS; ci++) {
+      for (let y = 0; y < h; y++) {
+        let blk = "air";
+        if (y < 4) {
+          blk = "air";
+        } else if (y === 4) {
+          blk = Math.random() < 0.12 ? "block_oak_log" : "air"; // occasional trees
+        } else if (y === 5) {
+          blk = "block_grass";
+        } else if (y < 10) {
+          const r = Math.random();
+          blk = r < 0.06 ? "block_iron" : "block_dirt";
+        } else if (y < 15) {
+          const r = Math.random();
+          blk = r < 0.06 ? "block_gold" : r < 0.14 ? "block_iron" : "block_rock";
+        } else {
+          const r = Math.random();
+          blk = r < 0.07 ? "block_diamond" : r < 0.16 ? "block_gold" : "block_rock";
+        }
+        grid[y].push(blk);
+      }
+    }
+
+    // ── Persist updated grid ────────────────────────────────────────────────
+    await client.query(
+      "UPDATE worlds SET block_data=$1 WHERE name=$2", [JSON.stringify(grid), worldName]
+    );
+
+    // ── Deduct gems ─────────────────────────────────────────────────────────
+    await client.query(
+      "UPDATE wallets SET gems = gems - $1 WHERE user_id = $2",
+      [EXPAND_GEM_COST, userId]
+    );
+
+    await client.query("COMMIT");
+    res.json({
+      success: true,
+      message: `World expanded by ${EXPAND_COLS} columns!`,
+      newWidth: grid[0].length,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    req.log.error({ err }, "World expand error");
+    res.status(500).json({ success: false, error: "Expand failed" });
+  } finally {
+    client.release();
   }
 });
 

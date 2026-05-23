@@ -36,14 +36,18 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   machine_core:        { gems: 0,  points: 0                                          },
   solar_panel_block:   { gems: 0,  points: 0                                          },
   data_cable:          { gems: 0,  points: 0                                          },
+  lamp_block:          { gems: 0,  points: 0                                          },
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
 // Placing these in the world and connecting them activates the Data Rig miner.
+// lamp_block is included so it participates in BFS power routing and can be
+// lit when connected to an active solar network.
 export const MACHINE_BLOCK_TYPES = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
+  "lamp_block",        // underground lamp — lights up when powered
 ]);
 
 // ─── Miner passive income rates (sat/day per level) ──────────────────────────
@@ -93,6 +97,8 @@ export const STORE_ITEMS = [
   { itemId: "pickaxe_iron",      displayName: "Iron Pickaxe",      gemCost: 200,  realCost: null, category: "tools",      description: "2.8× mining speed — breaks iron fast." },
   { itemId: "pickaxe_gold",      displayName: "Gold Pickaxe",      gemCost: 400,  realCost: null, category: "tools",      description: "4.5× mining speed." },
   { itemId: "pickaxe_diamond",   displayName: "Diamond Pickaxe",   gemCost: 800,  realCost: null, category: "tools",      description: "7× mining speed — the ultimate tool." },
+  // Lamp block — buy from store or craft with raw_iron; place underground + wire to solar network
+  { itemId: "lamp_block",        displayName: "Lamp Block",         gemCost: 15,   realCost: null, category: "lighting",   description: "Connect to your solar rig to illuminate underground caverns." },
 ];
 
 // ─── Human-readable item names (used in toast messages, inventory UI) ────────
@@ -128,6 +134,7 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   water_bucket:      "Water Bucket",
   world_lock:        "World Lock",
   diamond_lock:      "Diamond Lock",
+  lamp_block:        "Lamp Block",
 };
 
 // ─── Crafting recipes ─────────────────────────────────────────────────────────
@@ -279,6 +286,17 @@ export const CRAFTING_RECIPES: Record<string, {
     result: "thermal_paste",
     resultQty: 1,
   },
+
+  // ── Lamp block — cheap to craft; illuminates underground when wired to solar ─
+  lamp_block: {
+    displayName: "Lamp Block",
+    description: "Place underground and connect to your solar rig via Data Cables to light up caverns.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 1 },
+    ],
+    result: "lamp_block",
+    resultQty: 2,
+  },
 };
 
 // ─── Item category lookup (for inventory / store grouping) ───────────────────
@@ -309,4 +327,5 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   water_bucket:      "cooling",
   world_lock:        "locks",
   diamond_lock:      "locks",
+  lamp_block:        "lighting",
 };

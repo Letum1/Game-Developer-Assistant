@@ -23,9 +23,11 @@ const router: IRouter = Router();
 const actionTimestamps: Map<number, number[]> = new Map();
 
 // ─── Self-drop blocks: breaking returns the same block to inventory ───────────
+// lamp_block returns itself so players can reposition their lighting freely.
 const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
+  "lamp_block",
 ]);
 
 // ─── Oak tree blocks: breaking gives oak_wood (not the block itself) ─────────

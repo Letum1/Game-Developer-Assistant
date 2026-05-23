@@ -57,6 +57,7 @@ const BLOCK_HITS: Record<string, number> = {
   machine_core:      1,   // Machine component — 1-shot so you can rearrange
   solar_panel_block: 1,   // Power source — 1-shot to rearrange
   data_cable:        1,   // Connector — 1-shot to rearrange
+  lamp_block:        1,   // Lamp — 1-shot to reposition freely
 };
 
 // ─── Canvas fill colors per block type ───────────────────────────────────────
@@ -71,6 +72,7 @@ const BLOCK_COLORS: Record<string, string> = {
   machine_core:      "#0a1628",   // dark navy — circuit board feel
   solar_panel_block: "#0d2b2b",   // dark teal — solar panel base
   data_cable:        "#1a1a2e",   // very dark — cable conduit
+  lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
 };
 
 // ─── Top-edge highlight tints (makes blocks look 3D) ────────────────────────
@@ -85,6 +87,7 @@ const BLOCK_TINTS: Record<string, string> = {
   machine_core:      "rgba(34,197,94,0.15)",   // faint green circuit glow
   solar_panel_block: "rgba(255,220,50,0.20)",  // gold tint — solar cells
   data_cable:        "rgba(34,197,94,0.10)",   // faint green data line
+  lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
 };
 
 // ─── Hotbar label names ───────────────────────────────────────────────────────
@@ -96,6 +99,7 @@ const BLOCK_LABELS: Record<string, string> = {
   solar_panel_block: "SolarPnl",
   data_cable:        "Pipe",
   water_bucket:      "H₂O",
+  lamp_block:        "Lamp",   // underground light source
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -112,10 +116,13 @@ const PLACEABLE = new Set([
   "solar_panel_block",
   "data_cable",
   "water_bucket",
+  "lamp_block",    // powered lamp — connect to solar network for light
 ]);
 
 // ─── Machine block types set (for special rendering / detection) ─────────────
-const MACHINE_BLOCKS = new Set(["machine_core", "solar_panel_block", "data_cable"]);
+// lamp_block is in this set so it benefits from machine light treatment in the
+// shadow overlay (won't go fully dark) and participates in BFS power check.
+const MACHINE_BLOCKS = new Set(["machine_core", "solar_panel_block", "data_cable", "lamp_block"]);
 
 // ─── Max punch reach in block-units ─────────────────────────────────────────
 const REACH = 3.5;
@@ -336,6 +343,64 @@ function drawSolarPanel(ctx: CanvasRenderingContext2D, bx: number, by: number, p
 
   // Block border
   ctx.strokeStyle = powered ? "rgba(253,224,71,0.5)" : "rgba(253,224,71,0.15)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+  ctx.shadowBlur  = 0;
+}
+
+// ─── Lamp Block renderer ──────────────────────────────────────────────────────
+// Draws a metal lantern casing with a glowing amber bulb inside.
+// When powered (connected via cable to an active solar panel):
+//   • Bulb is bright amber-yellow with a radiant inner glow
+//   • Block-level shadow treatment is relaxed (handled in drawFrame halo pass)
+// When unpowered:
+//   • Bulb is dim gray — looks like a dead light
+function drawLampBlock(ctx: CanvasRenderingContext2D, bx: number, by: number, powered: boolean, time: number) {
+  const x  = bx * BS;
+  const y  = by * BS;
+
+  // ── Metal casing — dark iron body ────────────────────────────────────────
+  ctx.fillStyle = "#1c1608";
+  ctx.fillRect(x, y, BS, BS);
+
+  // Iron frame bars (cross pattern — decorative lantern grill)
+  ctx.fillStyle = "#302010";
+  ctx.fillRect(x + 2,      y + 2,  BS - 4, 4);   // top bar
+  ctx.fillRect(x + 2,      y + BS - 6, BS - 4, 4); // bottom bar
+  ctx.fillRect(x + 2,      y + 2,  4, BS - 4);   // left bar
+  ctx.fillRect(x + BS - 6, y + 2,  4, BS - 4);   // right bar
+
+  // ── Glass bulb area — central rounded square ──────────────────────────────
+  const pulse  = powered ? 0.6 + 0.4 * Math.sin(time / 300) : 0;
+  const bulbX  = x + 8;
+  const bulbY  = y + 8;
+  const bulbW  = BS - 16;
+  const bulbH  = BS - 16;
+
+  if (powered) {
+    // Lit: warm amber inner glow, bright center
+    ctx.fillStyle = `rgba(255,180,20,${0.7 + pulse * 0.3})`;
+    ctx.fillRect(bulbX, bulbY, bulbW, bulbH);
+
+    // Bright core hotspot in the very center
+    ctx.fillStyle = `rgba(255,240,180,${0.85 + pulse * 0.15})`;
+    ctx.fillRect(bulbX + 4, bulbY + 4, bulbW - 8, bulbH - 8);
+
+    // Glow halo on the block itself
+    ctx.shadowColor = "#fbbf24";
+    ctx.shadowBlur  = 6 + pulse * 10;
+  } else {
+    // Unlit: gray-dark glass — lamp is off / disconnected
+    ctx.fillStyle = "rgba(60,55,45,0.9)";
+    ctx.fillRect(bulbX, bulbY, bulbW, bulbH);
+    // Cross reflection mark (suggests glass even when dark)
+    ctx.fillStyle = "rgba(100,95,80,0.4)";
+    ctx.fillRect(bulbX + bulbW / 2 - 1, bulbY + 2, 2, bulbH - 4);
+    ctx.fillRect(bulbX + 2, bulbY + bulbH / 2 - 1, bulbW - 4, 2);
+  }
+
+  // ── Outer border ─────────────────────────────────────────────────────────
+  ctx.strokeStyle = powered ? `rgba(251,191,36,${0.6 + pulse * 0.4})` : "rgba(100,85,50,0.4)";
   ctx.lineWidth   = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
   ctx.shadowBlur  = 0;
@@ -607,7 +672,7 @@ export default function Game() {
   const { data: world, refetch: refetchWorld } = useGetWorld("start", {
     query: { enabled: !!userId, queryKey: getGetWorldQueryKey("start") },
   });
-  const { data: wallet } = useGetWallet({
+  const { data: wallet, refetch: refetchWallet } = useGetWallet({
     query: { enabled: !!userId, queryKey: getGetWalletQueryKey() },
   });
   const { data: inventory = [], refetch: refetchInventory } = useGetInventory({
@@ -674,6 +739,10 @@ export default function Game() {
   const [wizard,        setWizard]        = useState(false);
   const [wizardAns,     setWizardAns]     = useState("");
   const [chatOpen,      setChatOpen]      = useState(false);
+
+  // ── World expand state ────────────────────────────────────────────────────
+  // expandBusy: true while the server call is in flight (disables button)
+  const [expandBusy, setExpandBusy] = useState(false);
   const [chatMsgs,      setChatMsgs]      = useState<{ username: string; message: string }[]>([]);
   const [chatInput,     setChatInput]     = useState("");
   // Zoom display state (just for showing zoom% in the UI)
@@ -764,6 +833,45 @@ export default function Game() {
     };
     return () => ws.close();
   }, []);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // expandWorld — POST /api/world/expand to buy 5 more columns for 200 gems.
+  // Uses a plain fetch (not the generated API client) since we added this route
+  // after the codegen was run. refetchWorld() pulls the new, wider blockData.
+  // ════════════════════════════════════════════════════════════════════════
+  const expandWorld = useCallback(async () => {
+    if (expandBusy) return;
+    setExpandBusy(true);
+    try {
+      const res = await fetch("/api/world/expand", {
+        method:  "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id":    userId.toString(),
+        },
+        body: JSON.stringify({ worldName: "start" }),
+      });
+      const data = await res.json() as { success: boolean; error?: string; message?: string; newWidth?: number };
+      if (data.success) {
+        toast({
+          title:       "🗺 WORLD EXPANDED",
+          description: `${data.message} — scroll right to explore!`,
+          className:   "bg-black border-primary text-primary font-mono text-xs",
+        });
+        refetchWorld();   // fetch the new wider blockData from server
+      } else {
+        toast({
+          title:       "EXPAND FAILED",
+          description: data.error ?? "Unknown error",
+          variant:     "destructive",
+        });
+      }
+    } catch {
+      toast({ title: "EXPAND FAILED", description: "Server unreachable", variant: "destructive" });
+    } finally {
+      setExpandBusy(false);
+    }
+  }, [expandBusy, userId, toast, refetchWorld, refetchWallet]);
 
   // ── Send chat message ─────────────────────────────────────────────────────
   const sendChat = () => {
@@ -859,8 +967,9 @@ export default function Game() {
     // out-of-world black borders. The viewport in world-pixels is WW/zoom × WH/zoom.
     const vpW    = WW / zoom;   // visible width in world pixels
     const vpH    = WH / zoom;   // visible height in world pixels
-    const worldW = COLS * BS;
-    const worldH = ROWS * BS;
+    // Use actual grid size — world may have been expanded with gems
+    const worldW = (bd?.[0]?.length ?? COLS) * BS;
+    const worldH = (bd?.length        ?? ROWS) * BS;
 
     const targetCamX = (p.px + PW / 2) - vpW / 2;
     const targetCamY = (p.py + PH / 2) - vpH / 2;
@@ -1001,6 +1110,11 @@ export default function Game() {
             const active = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawPipe(ctx, gx, gy, active, now, conn);
 
+          } else if (blk === "lamp_block") {
+            // Lamp lights up when connected to an active solar network via BFS
+            const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawLampBlock(ctx, gx, gy, lit, now);
+
           } else {
             // Standard terrain block: base color + top highlight + border
             ctx.fillStyle = BLOCK_COLORS[blk] ?? "#1e293b";
@@ -1101,6 +1215,37 @@ export default function Game() {
       ctx.fillRect(fr ? px + PW + 1 : px - 5, py + 16, 4, 14);
       ctx.fillStyle = "#6b7280";
       ctx.fillRect(fr ? px + PW : px - 6,     py + 13, 6, 6);
+    }
+
+    // ── LAMP LIGHT HALOS (world space, before restore) ────────────────────
+    // For every powered lamp_block in the grid, draw a warm radial glow using
+    // globalCompositeOperation = "lighter" which ADDS light on top of the
+    // darkness overlays drawn per-block above, effectively illuminating
+    // a radius of ~4 blocks around each active lamp.
+    if (bd) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";  // additive blend — brightens pixels below
+      for (let gy = 0; gy < bd.length; gy++) {
+        for (let gx = 0; gx < bd[gy].length; gx++) {
+          if (bd[gy][gx] !== "lamp_block") continue;
+          const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+          if (!lit) continue;
+
+          const cx = gx * BS + BS / 2;   // world-space center of the lamp
+          const cy = gy * BS + BS / 2;
+          const r  = BS * 4.5;           // light radius — ~4.5 blocks
+          const pulse = 0.6 + 0.4 * Math.sin(now / 300);
+
+          // Radial gradient from warm amber at center to transparent at edge
+          const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+          grad.addColorStop(0,   `rgba(255,200,80,${0.55 * pulse})`);
+          grad.addColorStop(0.3, `rgba(255,160,40,${0.25 * pulse})`);
+          grad.addColorStop(1,   "rgba(0,0,0,0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+        }
+      }
+      ctx.restore();
     }
 
     // ── RESTORE from camera+zoom transform ───────────────────────────────
@@ -1510,6 +1655,22 @@ export default function Game() {
             <span className="text-muted-foreground uppercase block leading-none text-[10px] mb-0.5">Gems</span>
             <span className="text-primary font-bold">{wallet?.gems ?? 0} 💎</span>
           </div>
+
+          {/* Expand World button — costs 200 gems to add 5 more columns ──── */}
+          {/* Visible once player has mined a bit (wallet exists) */}
+          <button
+            onClick={expandWorld}
+            disabled={expandBusy || (wallet?.gems ?? 0) < 200}
+            title="Spend 200 💎 to add 5 more columns to your world"
+            className={`px-2 py-1 rounded border font-mono text-[10px] font-bold uppercase transition-all ${
+              (wallet?.gems ?? 0) >= 200
+                ? "border-primary/50 text-primary bg-primary/10 hover:bg-primary/20 cursor-pointer"
+                : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
+            } ${expandBusy ? "animate-pulse" : ""}`}
+          >
+            {expandBusy ? "..." : "⛏+5 cols"}
+            <span className="block text-[8px] leading-none mt-0.5 opacity-70">200 💎</span>
+          </button>
 
           {/* Chat toggle */}
           <button
