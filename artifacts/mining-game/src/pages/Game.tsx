@@ -13,7 +13,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import {
-  useGetWorld, useGameAction, useGetWallet, useGetInventory,
+  useGetWorld, useGameAction, useGetWallet, useGetInventory, useGetMiner,
   getGetWorldQueryKey, getGetWalletQueryKey, getGetInventoryQueryKey,
 } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
@@ -94,11 +94,16 @@ const BLOCK_LABELS: Record<string, string> = {
   block_rock:        "Rock",
   machine_core:      "M.Core",
   solar_panel_block: "SolarPnl",
-  data_cable:        "D.Cable",
+  data_cable:        "Pipe",
+  water_bucket:      "H₂O",
 };
+
+// ─── Block fill colors for hotbar swatches ────────────────────────────────────
+// water_bucket gets a blue swatch; actual placement is handled specially.
 
 // ─── Which inventory items can be placed as world blocks ─────────────────────
 // Includes terrain blocks (collected by mining) AND machine components (crafted).
+// water_bucket is special: it triggers a cooldown splash, not a real block place.
 const PLACEABLE = new Set([
   "block_grass",
   "block_dirt",
@@ -106,6 +111,7 @@ const PLACEABLE = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
+  "water_bucket",
 ]);
 
 // ─── Machine block types set (for special rendering / detection) ─────────────
@@ -394,15 +400,188 @@ function isMachineCoreActive(grid: string[][], gx: number, gy: number): boolean 
   });
 }
 
-// Returns true if a solar panel at (gx,gy) is adjacent to any machine component
-// (cable or core) — used so panels also glow when wired up.
-function isSolarPanelPowered(grid: string[][], gx: number, gy: number): boolean {
+// ─── Solar Panel sky-exposure check ──────────────────────────────────────────
+// A solar panel only generates power when:
+//   1. No solid blocks exist directly above it (needs open sky / no roof)
+//   2. It is daytime (dayFactor > 0.15 — fades with the sun)
+// If covered by any block or if it's night, it produces zero power.
+function isSolarPanelExposed(grid: string[][], gx: number, gy: number, dayFactor: number): boolean {
+  if (dayFactor < 0.15) return false;           // night — sun is gone
+  for (let y = gy - 1; y >= 0; y--) {           // scan all blocks above
+    if ((grid[y]?.[gx] ?? "air") !== "air") return false; // blocked by roof!
+  }
+  return true;  // clear sky above and sunlight available
+}
+
+// Returns true if a solar panel at (gx,gy) is wired to a cable or core neighbor
+// (purely for visual glow — adjacency wiring display).
+function isSolarPanelWired(grid: string[][], gx: number, gy: number): boolean {
   const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
   return dirs.some(([dx, dy]) => {
     const nx = gx + dx, ny = gy + dy;
     if (ny < 0 || ny >= grid.length || nx < 0 || nx >= grid[0].length) return false;
     return MACHINE_BLOCKS.has(grid[ny][nx]);
   });
+}
+
+// ─── BFS Power Chain ─────────────────────────────────────────────────────────
+// Returns true if machine_core at (gx,gy) has a cable/block path back to a
+// solar panel that is BOTH exposed to open sky AND daytime.
+// At night or when panels are covered = all cores go offline.
+function isCoreConnectedToPower(grid: string[][], gx: number, gy: number, dayFactor: number): boolean {
+  const visited = new Set<string>();
+  const queue: [number, number][] = [];
+
+  // Seed BFS only from solar panels that are actually generating power right now
+  for (let y = 0; y < grid.length; y++) {
+    for (let x = 0; x < (grid[y]?.length ?? 0); x++) {
+      if (grid[y][x] === "solar_panel_block" && isSolarPanelExposed(grid, x, y, dayFactor)) {
+        const k = `${x},${y}`;
+        visited.add(k);
+        queue.push([x, y]);
+      }
+    }
+  }
+
+  // Flood-fill through cables and machine blocks to reach target core
+  while (queue.length > 0) {
+    const [cx, cy] = queue.shift()!;
+    if (cx === gx && cy === gy) return true;
+    for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (ny < 0 || ny >= grid.length || nx < 0 || nx >= (grid[ny]?.length ?? 0)) continue;
+      const k = `${nx},${ny}`;
+      if (visited.has(k)) continue;
+      if (MACHINE_BLOCKS.has(grid[ny][nx])) {
+        visited.add(k);
+        queue.push([nx, ny]);
+      }
+    }
+  }
+  return false;
+}
+
+// ─── Pipe connection helper ───────────────────────────────────────────────────
+// Which of the 4 cardinal neighbors are also machine blocks (cables/cores/panels)?
+// Used to auto-connect pipe segments visually — like Factorio or Minecraft pipes.
+function getPipeConns(grid: string[][], gx: number, gy: number) {
+  const check = (dx: number, dy: number) => {
+    const nx = gx + dx, ny = gy + dy;
+    if (ny < 0 || ny >= grid.length || nx < 0 || nx >= (grid[ny]?.length ?? 0)) return false;
+    return MACHINE_BLOCKS.has(grid[ny][nx]);
+  };
+  return { top: check(0, -1), bottom: check(0, 1), left: check(-1, 0), right: check(1, 0) };
+}
+
+// ─── Directional Pipe renderer ────────────────────────────────────────────────
+// Draws pipe segments connecting to neighbors. Looks like plumbing — straight,
+// elbow, T-junction, or cross — depending on which sides have machine neighbors.
+// Active pipes glow green and show data flowing through them; inactive are dim.
+function drawPipe(
+  ctx: CanvasRenderingContext2D,
+  bx: number, by: number,
+  active: boolean, time: number,
+  conn: { top: boolean; bottom: boolean; left: boolean; right: boolean }
+) {
+  const x = bx * BS, y = by * BS;
+  const cx = x + BS / 2, cy = y + BS / 2;
+  const PW2 = 11; // pipe tube half-width in px
+
+  // Dark background
+  ctx.fillStyle = "#0d0d1a";
+  ctx.fillRect(x, y, BS, BS);
+
+  // Pipe body color (glowing green when active, steel-gray when cold)
+  const pipeBody   = active ? "#1a3a2a" : "#1e202e";
+  const pipeEdge   = active ? `rgba(34,197,94,${0.5 + 0.35 * Math.sin(time / 400)})` : "rgba(90,100,120,0.45)";
+  const junctionC  = active ? `rgba(34,197,94,${0.7 + 0.3 * Math.sin(time / 320)})` : "rgba(80,90,110,0.4)";
+
+  if (active) {
+    ctx.shadowColor = "#22c55e";
+    ctx.shadowBlur  = 7;
+  }
+
+  // Determine which arms to draw (at least H if nothing connects)
+  const hasH = conn.left  || conn.right  || (!conn.top && !conn.bottom);
+  const hasV = conn.top   || conn.bottom || (!conn.left && !conn.right);
+
+  // Draw horizontal arm
+  if (hasH) {
+    const x1 = conn.left  ? x : cx - PW2 / 2;
+    const x2 = conn.right ? x + BS : cx + PW2 / 2;
+    ctx.fillStyle = pipeBody;
+    ctx.fillRect(x1, cy - PW2 / 2, x2 - x1, PW2);
+    // Inner highlight stripe
+    ctx.fillStyle = pipeEdge;
+    ctx.fillRect(x1, cy - PW2 / 2 + 1, x2 - x1, 2);
+    ctx.fillRect(x1, cy + PW2 / 2 - 3, x2 - x1, 2);
+  }
+  // Draw vertical arm
+  if (hasV) {
+    const y1 = conn.top    ? y : cy - PW2 / 2;
+    const y2 = conn.bottom ? y + BS : cy + PW2 / 2;
+    ctx.fillStyle = pipeBody;
+    ctx.fillRect(cx - PW2 / 2, y1, PW2, y2 - y1);
+    // Inner highlight stripe
+    ctx.fillStyle = pipeEdge;
+    ctx.fillRect(cx - PW2 / 2 + 1, y1, 2, y2 - y1);
+    ctx.fillRect(cx + PW2 / 2 - 3, y1, 2, y2 - y1);
+  }
+
+  // Junction center circle (bolt/coupling)
+  ctx.fillStyle = junctionC;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Flowing data particles when powered
+  if (active) {
+    const flow1 = (time / 900) % 1.0;
+    const flow2 = (time / 900 + 0.5) % 1.0;
+    ctx.fillStyle = "rgba(180,255,180,0.85)";
+    if (hasH) {
+      const pX = x + flow1 * BS;
+      ctx.fillRect(pX, cy - 1, 4, 2);
+    }
+    if (hasV) {
+      const pY = y + flow2 * BS;
+      ctx.fillRect(cx - 1, pY, 2, 4);
+    }
+  }
+
+  ctx.shadowBlur  = 0;
+  // Outer border
+  ctx.strokeStyle = active ? "rgba(34,197,94,0.25)" : "rgba(100,100,120,0.18)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+}
+
+// ─── Water Splash renderer (drawn in world space) ─────────────────────────────
+// Called from drawFrame after the flash layer. alpha: 1.0 (fresh) → 0.0 (faded).
+function drawWaterSplash(ctx: CanvasRenderingContext2D, bx: number, by: number, alpha: number) {
+  const cx = bx * BS + BS / 2;
+  const cy = by * BS + BS / 2;
+  const spread = (1 - alpha) * 22;  // particles fly outward as alpha drops
+
+  // 8 droplet particles emanating from center
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const px = cx + Math.cos(angle) * spread;
+    const py = cy + Math.sin(angle) * spread;
+    ctx.fillStyle = `rgba(80,180,255,${alpha * 0.85})`;
+    ctx.beginPath();
+    ctx.arc(px, py, 2.5 * alpha + 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Center ripple ring
+  ctx.strokeStyle = `rgba(130,210,255,${alpha * 0.6})`;
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, spread + 3, 0, Math.PI * 2);
+  ctx.stroke();
+  // Inner splash flash
+  ctx.fillStyle = `rgba(200,240,255,${alpha * 0.35})`;
+  ctx.fillRect(bx * BS + 4, by * BS + 4, BS - 8, BS - 8);
 }
 
 // ============================================================
@@ -437,6 +616,12 @@ export default function Game() {
   const gameAction = useGameAction();
   const { toast } = useToast();
 
+  // ── Miner data — used for overheat detection in the world renderer ────────
+  const { data: minerData } = useGetMiner({ query: { enabled: !!userId, refetchInterval: 8000 } });
+  // Store overheat flag in a ref so drawFrame can read it without re-creating
+  const overheatRef    = useRef(false);
+  const critHeatRef    = useRef(false);
+
   // ── Physics state (ref = mutable, no re-render on every frame) ───────────
   const physRef = useRef({
     px: 5 * BS,        // world pixel X position
@@ -467,6 +652,21 @@ export default function Game() {
   const flashRef        = useRef<Map<string, number>>(new Map());
   // prevents double-firing while waiting for a server response
   const pendingBreakRef = useRef(false);
+
+  // ── Water splash animations ───────────────────────────────────────────────
+  // "bx,by" → remaining time in ms. Water splash fades over ~800ms.
+  const waterSplashRef  = useRef<Map<string, number>>(new Map());
+
+  // ── Light map: precomputed per-block brightness (0.0 = dark, 1.0 = lit) ──
+  // Recomputed whenever world data changes. Stored as [row][col].
+  // Sunlight enters from the top of each column and attenuates underground.
+  const lightMapRef     = useRef<number[][] | null>(null);
+
+  // ── Joystick UI state — only used for rendering the thumb position ────────
+  const [joystickThumb, setJoystickThumb] = useState({ x: 0, y: 0 });
+  const joystickActiveRef = useRef(false);
+  const joystickBaseRef   = useRef({ x: 0, y: 0 });
+  const JOYSTICK_R        = 34; // max thumb travel from center (px)
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [mode,          setMode]         = useState<"punch" | "place">("punch");
@@ -510,7 +710,44 @@ export default function Game() {
       physRef.current.px = 5 * BS + (BS - PW) / 2;
       physRef.current.spawned = true;
     }
+
+    // ── Recompute sunlight map when world changes ─────────────────────────
+    // For each column, sunlight enters from the top and attenuates downward.
+    // Surface blocks exposed to open sky = fully lit.
+    // Underground blocks decay rapidly to near-black (players need machines/torches).
+    const bd = world.blockData;
+    const h  = bd.length;
+    const w  = bd[0]?.length ?? 0;
+    const lm: number[][] = Array.from({ length: h }, () => new Array(w).fill(0));
+
+    for (let gx = 0; gx < w; gx++) {
+      let reachedSurface = false;
+      let depthBelow     = 0;
+      for (let gy = 0; gy < h; gy++) {
+        if (bd[gy][gx] === "air") {
+          lm[gy][gx] = 1.0;            // sky / open air — full sunlight
+        } else if (!reachedSurface) {
+          lm[gy][gx] = 0.92;           // first solid surface block — almost fully lit
+          reachedSurface = true;
+          depthBelow = 1;
+        } else {
+          // Underground — each block deeper gets progressively darker
+          lm[gy][gx] = Math.max(0.04, 0.85 - depthBelow * 0.14);
+          depthBelow++;
+        }
+      }
+    }
+    lightMapRef.current = lm;
   }, [world]);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Effect: sync miner overheat state into refs (read in drawFrame)
+  // ════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    const temp         = (minerData as { temperature?: number })?.temperature ?? 0;
+    overheatRef.current  = temp > 80;   // warning — orange glow
+    critHeatRef.current  = temp > 95;   // critical — red pulse
+  }, [minerData]);
 
   // ════════════════════════════════════════════════════════════════════════
   // Effect: open WebSocket for real-time world chat
@@ -702,30 +939,70 @@ export default function Game() {
     ctx.scale(zoom, zoom);
     ctx.translate(-camX, -camY);
 
-    // ── BLOCKS ────────────────────────────────────────────────────────────
+    // ── BLOCKS ─────────────────────────────────────────────────────────────
+    // dayFactor: 0.0 = full night, 1.0 = full sun.
+    // Controls both solar panel power output AND sunlight intensity overlay.
+    const dayFactor = Math.max(0, 1 - sky.alpha / 0.38);
+    const lm        = lightMapRef.current;
+
     if (bd) {
       for (let gy = 0; gy < bd.length; gy++) {
         for (let gx = 0; gx < bd[gy].length; gx++) {
           const blk = bd[gy][gx];
           if (blk === "air") continue;
 
-          // ── Machine blocks get special pixel-art rendering ─────────────
+          // ── Machine blocks — special pixel-art rendering ───────────────
           if (blk === "machine_core") {
-            const active = isMachineCoreActive(bd, gx, gy);
-            drawMachineCore(ctx, gx, gy, active, now);
+            // Powered only when BFS path reaches an exposed/daytime solar panel
+            const powered = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawMachineCore(ctx, gx, gy, powered, now);
+
+            // Overheat glow overlay — orange/red pulse when temperature is high
+            if (overheatRef.current) {
+              const pulse = 0.5 + 0.5 * Math.sin(now / 250);
+              ctx.fillStyle = critHeatRef.current
+                ? `rgba(220,30,0,${0.35 + pulse * 0.3})`
+                : `rgba(255,120,0,${0.25 + pulse * 0.2})`;
+              ctx.fillRect(gx * BS + 1, gy * BS + 1, BS - 2, BS - 2);
+              // Overheat steam particles rising from the core
+              const steamX = gx * BS + BS / 2 + (Math.random() - 0.5) * 10;
+              const steamY = gy * BS + (1 - (now % 600) / 600) * BS;
+              ctx.fillStyle = `rgba(200,200,255,${0.15 + Math.random() * 0.15})`;
+              ctx.beginPath();
+              ctx.arc(steamX, steamY, 3 + Math.random() * 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+
           } else if (blk === "solar_panel_block") {
-            const powered = isSolarPanelPowered(bd, gx, gy);
-            drawSolarPanel(ctx, gx, gy, powered, now);
+            // Panel powered = wired to a cable AND has open sky AND is daytime
+            const exposed = isSolarPanelExposed(bd, gx, gy, dayFactor);
+            const wired   = isSolarPanelWired(bd, gx, gy);
+            drawSolarPanel(ctx, gx, gy, exposed && wired, now);
+
+            // No-sky warning: draw a red "blocked" X when panel has a roof
+            if (!exposed && dayFactor > 0.15) {
+              ctx.fillStyle = "rgba(220,40,40,0.55)";
+              ctx.fillRect(gx * BS + 2, gy * BS + 2, BS - 4, BS - 4);
+              ctx.strokeStyle = "rgba(255,80,80,0.9)";
+              ctx.lineWidth   = 2;
+              ctx.beginPath();
+              ctx.moveTo(gx * BS + 6,        gy * BS + 6);
+              ctx.lineTo(gx * BS + BS - 6,   gy * BS + BS - 6);
+              ctx.moveTo(gx * BS + BS - 6,   gy * BS + 6);
+              ctx.lineTo(gx * BS + 6,        gy * BS + BS - 6);
+              ctx.stroke();
+            }
+
           } else if (blk === "data_cable") {
-            // Cable is active if it's adjacent to any machine block
-            const active = [[0,-1],[0,1],[-1,0],[1,0]].some(([dx,dy]) => {
-              const nx = gx+dx, ny = gy+dy;
-              if (ny<0||ny>=bd.length||nx<0||nx>=bd[0].length) return false;
-              return MACHINE_BLOCKS.has(bd[ny][nx]);
-            });
-            drawDataCable(ctx, gx, gy, active, now);
+            // Pipe active if BFS can reach it from an exposed solar panel
+            const conn   = getPipeConns(bd, gx, gy);
+            // A cable segment is "live" if it touches the powered network:
+            // BFS the cable's position as if it were a core (same algorithm)
+            const active = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawPipe(ctx, gx, gy, active, now, conn);
+
           } else {
-            // Standard block: colored fill + highlight tint + dark border
+            // Standard terrain block: base color + top highlight + border
             ctx.fillStyle = BLOCK_COLORS[blk] ?? "#1e293b";
             ctx.fillRect(gx * BS, gy * BS, BS, BS);
 
@@ -736,6 +1013,23 @@ export default function Game() {
             ctx.strokeStyle = "rgba(0,0,0,0.4)";
             ctx.lineWidth   = 1;
             ctx.strokeRect(gx * BS + 0.5, gy * BS + 0.5, BS - 1, BS - 1);
+          }
+
+          // ── SUNLIGHT SHADOW OVERLAY (per block) ───────────────────────
+          // Underground blocks are dark; surface/sky blocks are lit by the sun.
+          // Machine blocks emit their own light so get a lighter overlay.
+          if (lm) {
+            const baseLight  = lm[gy]?.[gx] ?? 0.1;
+            const isMachine  = MACHINE_BLOCKS.has(blk);
+            // Machines glow, so they never go fully dark (min 0.35 light)
+            const lightLevel = isMachine ? Math.max(0.35, baseLight) : baseLight;
+            // At night, even lit surface blocks get an extra darkness penalty
+            const nightBoost = (1 - dayFactor) * 0.45;
+            const darkness   = Math.min(0.92, (1 - lightLevel) * 0.88 + nightBoost);
+            if (darkness > 0.03) {
+              ctx.fillStyle = `rgba(0,0,12,${darkness})`;
+              ctx.fillRect(gx * BS, gy * BS, BS, BS);
+            }
           }
         }
       }
@@ -753,6 +1047,17 @@ export default function Game() {
         const next = alpha - 0.18;
         if (next <= 0) flashRef.current.delete(key);
         else           flashRef.current.set(key, next);
+      });
+
+      // ── WATER SPLASH ANIMATIONS ────────────────────────────────────────
+      // Water bucket dropped on a machine core shows a blue splash + ripple.
+      waterSplashRef.current.forEach((timeLeft, key) => {
+        const [bxStr, byStr] = key.split(",");
+        const splashAlpha    = timeLeft / 800;  // 1.0 fresh → 0.0 faded
+        drawWaterSplash(ctx, parseInt(bxStr), parseInt(byStr), splashAlpha);
+        const next = timeLeft - 16;
+        if (next <= 0) waterSplashRef.current.delete(key);
+        else           waterSplashRef.current.set(key, next);
       });
     }
 
@@ -971,6 +1276,32 @@ export default function Game() {
       return;
     }
 
+    // ── WATER BUCKET — special: splash on/near machine_core for cooling ──────
+    // Player must physically walk next to the core and "throw" the bucket.
+    if (mode === "place" && selectedBlock === "water_bucket") {
+      // Accept clicks on the core itself OR on any adjacent air tile next to it
+      const isCore = bd[by][bx] === "machine_core";
+      const adjCore = !isCore && [[0,-1],[0,1],[-1,0],[1,0]].some(([dx, dy]) => {
+        const nx = bx + dx, ny2 = by + dy;
+        if (ny2 < 0 || ny2 >= bd.length || nx < 0 || nx >= bd[0].length) return false;
+        return bd[ny2][nx] === "machine_core";
+      });
+      if (!isCore && !adjCore) {
+        toast({ title: "NO CORE NEARBY", description: "Walk next to the Machine Core to cool it.", className: "bg-black border-blue-500 text-blue-400 font-mono text-xs" });
+        return;
+      }
+      // Trigger water splash animation at the core block
+      const splashKey = `${bx},${by}`;
+      waterSplashRef.current.set(splashKey, 800);
+      toast({ title: "COOLING FLUSH", description: "Water applied — temperature dropping!", className: "bg-black border-blue-400 text-blue-300 font-mono text-xs" });
+      // Fire the miner maintain action (type: water_bucket) via game action
+      gameAction.mutate(
+        { data: { actionType: "maintain", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
+        { onSuccess: () => { refetchInventory(); } }
+      );
+      return;
+    }
+
     // ── PLACE MODE ────────────────────────────────────────────────────────
     if (mode === "place" && selectedBlock) {
       if (bd[by][bx] !== "air") {
@@ -1066,19 +1397,52 @@ export default function Game() {
   useEffect(() => { breakingRef.current.clear(); }, [world]);
 
   // ════════════════════════════════════════════════════════════════════════
-  // Touch / on-screen controls — Growtopia/Terraria style
-  // These are always visible (not just mobile), overlaid on the canvas.
+  // Joystick pointer handlers — drives player movement + jump
+  // The joystick base is centred in its div; thumb clamped to JOYSTICK_R.
+  // Horizontal displacement → velocity; upward pull → jump.
   // ════════════════════════════════════════════════════════════════════════
-  const mobileMove = useCallback((dir: "left" | "right" | "stop" | "jump") => {
+  const handleJoystickDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);  // lock pointer to this div
+    joystickActiveRef.current = true;
+    const rect = e.currentTarget.getBoundingClientRect();
+    joystickBaseRef.current = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }, []);
+
+  const handleJoystickMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!joystickActiveRef.current) return;
+    const base = joystickBaseRef.current;
+    const dx   = e.clientX - base.x;
+    const dy   = e.clientY - base.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    // Clamp thumb within joystick radius
+    const cx   = dist > JOYSTICK_R ? (dx / dist) * JOYSTICK_R : dx;
+    const cy   = dist > JOYSTICK_R ? (dy / dist) * JOYSTICK_R : dy;
+    setJoystickThumb({ x: cx, y: cy });
+
+    // Drive player — dead zone of 6px to avoid drift when thumb is centred
     const p = physRef.current;
-    if (dir === "left")  { p.vx = -MOVE_SPEED; p.facingRight = false; }
-    if (dir === "right") { p.vx =  MOVE_SPEED; p.facingRight = true;  }
-    if (dir === "stop")  { p.vx = 0; }
-    if (dir === "jump" && p.onGround) { p.vy = JUMP_VY; p.onGround = false; }
+    if      (cx < -6) { p.vx = -MOVE_SPEED * Math.min(1, Math.abs(cx) / JOYSTICK_R); p.facingRight = false; }
+    else if (cx >  6) { p.vx =  MOVE_SPEED * Math.min(1, cx / JOYSTICK_R);            p.facingRight = true;  }
+    else              { p.vx = 0; }
+
+    // Jump: drag thumb upward past 40% of radius
+    if (cy < -JOYSTICK_R * 0.40 && p.onGround) {
+      p.vy = JUMP_VY;
+      p.onGround = false;
+    }
+  }, [JOYSTICK_R]);
+
+  const handleJoystickUp = useCallback(() => {
+    joystickActiveRef.current = false;
+    setJoystickThumb({ x: 0, y: 0 });
+    physRef.current.vx = 0;   // stop when thumb released
   }, []);
 
   // ── Hotbar: placeable items from inventory (terrain + machine blocks) ────
   const hotbarItems = inventory.filter((i) => PLACEABLE.has(i.itemId) && i.quantity > 0);
+
+  // ── Water bucket indicator from inventory ────────────────────────────────
+  const hasWaterBucket = inventory.some((i) => i.itemId === "water_bucket" && i.quantity > 0);
 
   // Helper: shared style for on-screen control buttons
   const ctrlBtn = "select-none touch-none transition-all active:scale-90";
@@ -1185,6 +1549,81 @@ export default function Game() {
               cursor: mode === "place" ? "cell" : "crosshair",
             }}
           />
+
+          {/* ── VIRTUAL JOYSTICK OVERLAY ─────────────────────────────────── */}
+          {/* Positioned absolute bottom-left of the canvas container.       */}
+          {/* Pointer capture keeps tracking even if finger leaves the div.  */}
+          <div
+            className="absolute bottom-4 left-4 z-20 select-none touch-none"
+            style={{ width: 90, height: 90, touchAction: "none" }}
+            onPointerDown={handleJoystickDown}
+            onPointerMove={handleJoystickMove}
+            onPointerUp={handleJoystickUp}
+            onPointerCancel={handleJoystickUp}
+          >
+            {/* Base ring — semi-transparent dark circle with green outline */}
+            <svg width="90" height="90" className="absolute inset-0 pointer-events-none">
+              {/* Outer glow ring */}
+              <circle cx="45" cy="45" r="43"
+                fill="rgba(0,0,0,0.55)"
+                stroke="rgba(34,197,94,0.35)"
+                strokeWidth="2" />
+              {/* Inner dead-zone indicator ring */}
+              <circle cx="45" cy="45" r="10"
+                fill="none"
+                stroke="rgba(34,197,94,0.15)"
+                strokeWidth="1" />
+              {/* Cardinal direction arrows */}
+              <text x="45" y="13" textAnchor="middle" fill="rgba(34,197,94,0.7)" fontSize="11" fontFamily="monospace">▲</text>
+              <text x="45" y="84" textAnchor="middle" fill="rgba(34,197,94,0.3)" fontSize="11" fontFamily="monospace">▼</text>
+              <text x="9"  y="50" textAnchor="middle" fill="rgba(34,197,94,0.7)" fontSize="11" fontFamily="monospace">◀</text>
+              <text x="81" y="50" textAnchor="middle" fill="rgba(34,197,94,0.7)" fontSize="11" fontFamily="monospace">▶</text>
+            </svg>
+
+            {/* Draggable thumb — slides within the base */}
+            <div
+              className="absolute rounded-full border-2 pointer-events-none"
+              style={{
+                width:  34,
+                height: 34,
+                left:   45 - 17 + joystickThumb.x,
+                top:    45 - 17 + joystickThumb.y,
+                background:  "radial-gradient(circle at 40% 35%, rgba(34,197,94,0.55), rgba(10,60,20,0.8))",
+                borderColor: joystickActiveRef.current ? "rgba(34,197,94,0.9)" : "rgba(34,197,94,0.5)",
+                boxShadow:   joystickActiveRef.current ? "0 0 12px rgba(34,197,94,0.6)" : "none",
+                transition:  joystickActiveRef.current ? "none" : "left 0.1s, top 0.1s",
+              }}
+            />
+          </div>
+
+          {/* ── Jump button (top-right of joystick area, easier thumb reach) ── */}
+          <button
+            className="absolute bottom-4 left-24 z-20 select-none touch-none w-11 h-11 rounded-full border-2 border-primary/50 bg-black/60 text-primary text-xs font-bold font-mono active:bg-primary/30 active:border-primary"
+            style={{ touchAction: "none" }}
+            onPointerDown={() => {
+              const p = physRef.current;
+              if (p.onGround) { p.vy = JUMP_VY; p.onGround = false; }
+            }}
+            title="Jump (or drag joystick UP)"
+          >
+            <span className="block text-center leading-none text-[10px] mt-0.5 text-primary/60">JMP</span>
+            <span className="block text-center leading-none">▲</span>
+          </button>
+
+          {/* ── Solar power status badge (top-right of canvas) ───────────── */}
+          {(() => {
+            const t2 = (performance.now() % DAY_MS) / DAY_MS;
+            const isNight = t2 < 0.12 || t2 > 0.68;
+            return (
+              <div className={`absolute top-2 right-2 z-10 px-2 py-1 rounded border font-mono text-[9px] font-bold ${
+                isNight
+                  ? "border-zinc-600 text-zinc-400 bg-black/70"
+                  : "border-yellow-500/50 text-yellow-300 bg-black/70"
+              }`}>
+                {isNight ? "🌙 NIGHT — no solar" : "☀ SOLAR ACTIVE"}
+              </div>
+            );
+          })()}
         </div>
 
         {/* ── CHAT PANEL (collapsible sidebar) ──────────────────────────── */}
@@ -1220,91 +1659,67 @@ export default function Game() {
         )}
       </div>
 
-      {/* ── CONTROLS BAR — always rendered below canvas, no GPU layer clash ─ */}
-      {/* Placed between canvas and hotbar so it's always visible on screen.  */}
-      {/* Keyboard (WASD/arrows/space) still works; this is for touch + mouse. */}
-      <div ref={ctrlBarRef} className="flex items-center gap-2 px-3 py-1.5 shrink-0" style={{ background: "red", minHeight: "52px", zIndex: 999, position: "relative" }}>
+      {/* ── CONTROLS BAR — mode toggle + zoom. Joystick lives on the canvas. */}
+      {/* The old d-pad is gone — movement is handled by the joystick overlay. */}
+      <div ref={ctrlBarRef} className="flex items-center gap-2 px-3 py-1.5 bg-black/90 border-t border-border shrink-0">
 
-        {/* ── Movement: ◄ JUMP ► ─────────────────────────────────────── */}
-        <div className="flex items-center gap-1">
-          <button
-            className={`${ctrlBtn} w-10 h-10 rounded-lg bg-zinc-800 border border-white/20 text-white text-lg font-bold active:bg-white/20`}
-            onPointerDown={() => mobileMove("left")}
-            onPointerUp={() => mobileMove("stop")}
-            onPointerLeave={() => mobileMove("stop")}
-            onTouchStart={(e) => { e.preventDefault(); mobileMove("left"); }}
-            onTouchEnd={() => mobileMove("stop")}
-            title="Move left"
-          >◀</button>
+        {/* ── Joystick hint label (reminds player how to move) ────────── */}
+        <span className="text-[9px] font-mono text-primary/50 shrink-0 hidden sm:block">
+          🕹 joystick to move/jump
+        </span>
+        <div className="w-px h-6 bg-border mx-1 shrink-0 hidden sm:block" />
 
-          <button
-            className={`${ctrlBtn} w-14 h-10 rounded-lg bg-primary/30 border border-primary text-primary text-xs font-bold uppercase tracking-wide active:bg-primary active:text-black`}
-            onPointerDown={() => mobileMove("jump")}
-            onTouchStart={(e) => { e.preventDefault(); mobileMove("jump"); }}
-            title="Jump"
-          >▲ JUMP</button>
+        {/* ── Mode: Mine / Place ───────────────────────────────────────── */}
+        <button
+          onClick={() => { setMode("punch"); setSelectedBlock(null); }}
+          className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
+            mode === "punch"
+              ? "bg-red-600/80 border-red-500 text-white"
+              : "bg-zinc-900 border-white/15 text-white/50 hover:text-red-400"
+          }`}
+        >⛏ Mine</button>
 
-          <button
-            className={`${ctrlBtn} w-10 h-10 rounded-lg bg-zinc-800 border border-white/20 text-white text-lg font-bold active:bg-white/20`}
-            onPointerDown={() => mobileMove("right")}
-            onPointerUp={() => mobileMove("stop")}
-            onPointerLeave={() => mobileMove("stop")}
-            onTouchStart={(e) => { e.preventDefault(); mobileMove("right"); }}
-            onTouchEnd={() => mobileMove("stop")}
-            title="Move right"
-          >▶</button>
-        </div>
+        <button
+          onClick={() => setMode("place")}
+          className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
+            mode === "place"
+              ? "bg-blue-600/80 border-blue-500 text-white"
+              : "bg-zinc-900 border-white/15 text-white/50 hover:text-blue-400"
+          }`}
+        >🧱 Place</button>
 
-        {/* ── Divider ──────────────────────────────────────────────────── */}
-        <div className="w-px h-8 bg-border mx-1 shrink-0" />
-
-        {/* ── Mode: Punch / Place ───────────────────────────────────────── */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => { setMode("punch"); setSelectedBlock(null); }}
-            className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
-              mode === "punch"
-                ? "bg-red-600 border-red-500 text-white"
-                : "bg-zinc-800 border-white/20 text-white/60 hover:text-red-400"
-            }`}
-          >👊 Punch</button>
-
-          <button
-            onClick={() => setMode("place")}
-            className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
-              mode === "place"
-                ? "bg-blue-600 border-blue-500 text-white"
-                : "bg-zinc-800 border-white/20 text-white/60 hover:text-blue-400"
-            }`}
-          >🧱 Place</button>
-        </div>
-
-        {/* ── Divider ──────────────────────────────────────────────────── */}
-        <div className="w-px h-8 bg-border mx-1 shrink-0" />
+        <div className="w-px h-6 bg-border mx-1 shrink-0" />
 
         {/* ── Zoom controls ────────────────────────────────────────────── */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => adjustZoom(ZOOM_STEP)}
-            className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-800 border border-border text-primary flex items-center justify-center hover:bg-primary/20`}
-            title="Zoom in"
-          ><ZoomIn className="w-3.5 h-3.5" /></button>
+        <button
+          onClick={() => adjustZoom(ZOOM_STEP)}
+          className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-900 border border-border text-primary flex items-center justify-center hover:bg-primary/20`}
+          title="Zoom in"
+        ><ZoomIn className="w-3.5 h-3.5" /></button>
+        <span className="text-[9px] font-mono text-muted-foreground w-9 text-center">
+          {Math.round(zoomDisplay * 100)}%
+        </span>
+        <button
+          onClick={() => adjustZoom(-ZOOM_STEP)}
+          className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-900 border border-border text-muted-foreground flex items-center justify-center hover:bg-primary/20`}
+          title="Zoom out"
+        ><ZoomOut className="w-3.5 h-3.5" /></button>
 
-          <span className="text-[9px] font-mono text-muted-foreground w-9 text-center">
-            {Math.round(zoomDisplay * 100)}%
-          </span>
+        {/* ── Overheat indicator ────────────────────────────────────────── */}
+        {overheatRef.current && (
+          <div className={`ml-auto shrink-0 px-2 py-1 rounded border font-mono text-[9px] font-bold ${
+            critHeatRef.current
+              ? "border-red-500 text-red-400 bg-red-900/30 animate-pulse"
+              : "border-orange-500 text-orange-400 bg-orange-900/20"
+          }`}>
+            {critHeatRef.current ? "🔥 CRITICAL HEAT" : "♨ OVERHEAT"} — use H₂O
+          </div>
+        )}
 
-          <button
-            onClick={() => adjustZoom(-ZOOM_STEP)}
-            className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-800 border border-border text-muted-foreground flex items-center justify-center hover:bg-primary/20`}
-            title="Zoom out"
-          ><ZoomOut className="w-3.5 h-3.5" /></button>
-        </div>
-
-        {/* ── Machine rig hint (when machine blocks are in hotbar) ──────── */}
-        {hotbarItems.some(i => MACHINE_BLOCKS.has(i.itemId)) && (
-          <span className="ml-auto text-[9px] font-mono text-primary shrink-0 hidden sm:block">
-            💡 Place <b>Core</b> + <b>Solar Panels</b> side-by-side to build your rig
+        {/* ── Solar panel tip (when no exposed panel visible) ──────────── */}
+        {!overheatRef.current && hotbarItems.some(i => i.itemId === "solar_panel_block") && (
+          <span className="ml-auto text-[9px] font-mono text-yellow-400/70 shrink-0 hidden sm:block">
+            ☀ Solar panels need <b>open sky</b> + <b>daytime</b> to power rigs
           </span>
         )}
       </div>
