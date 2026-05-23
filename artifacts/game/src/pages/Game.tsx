@@ -802,6 +802,10 @@ export default function Game() {
       }
     }
 
+    // Read mining state once here so it is accessible both inside and outside
+    // the `if (bd)` block — fixes "m is not defined" at the reach-ring draw.
+    const m = miningRef.current;
+
     // ── BLOCKS ───────────────────────────────────────────────────────────────
     if (bd) {
       for (let y=0; y<bd.length; y++) {
@@ -820,7 +824,7 @@ export default function Game() {
 
       // ── MINING RETICLE — draw on top of blocks, before player ────────────
       // Shows: animated dashed border + health bar + crack pattern
-      const m = miningRef.current;
+      // (m is declared above the if(bd) block so it's in scope here)
       if (m.active && bd[m.by]?.[m.bx] !== "air") {
         // Draw crack pattern based on damage progress
         const progress = 1 - (m.health / m.maxHealth);
@@ -1164,25 +1168,31 @@ export default function Game() {
         className="md:hidden flex items-center gap-2 px-3 py-2 bg-black/95 border-t border-border shrink-0"
         style={{touchAction:"manipulation"}}
       >
+        {/*
+          e.isPrimary — only true for the FIRST finger touching the screen.
+          A second finger (pinch-to-zoom) has isPrimary=false, so it is
+          completely ignored here. This is the correct, low-latency way to
+          block pinch from accidentally triggering D-pad movement.
+        */}
         <button
           className="w-14 h-14 rounded-xl bg-black/70 border-2 border-border text-white text-2xl font-bold active:bg-primary/20 active:border-primary select-none flex items-center justify-center transition-colors"
-          onPointerDown={e=>{ e.preventDefault(); mobileMove("left");  }}
-          onPointerUp={e=>  { e.preventDefault(); mobileMove("stop");  }}
-          onPointerLeave={e=>{ e.preventDefault(); mobileMove("stop"); }}
+          onPointerDown={e=>{ if(!e.isPrimary) return; e.preventDefault(); mobileMove("left");  }}
+          onPointerUp={e=>  { if(!e.isPrimary) return; e.preventDefault(); mobileMove("stop");  }}
+          onPointerLeave={e=>{ if(!e.isPrimary) return; e.preventDefault(); mobileMove("stop"); }}
           style={{touchAction:"none"}}
         >◀</button>
 
         <button
           className="flex-1 h-14 rounded-xl bg-primary/20 border-2 border-primary text-primary font-black text-sm uppercase tracking-widest active:bg-primary active:text-black select-none transition-colors"
-          onPointerDown={e=>{ e.preventDefault(); mobileMove("jump"); }}
+          onPointerDown={e=>{ if(!e.isPrimary) return; e.preventDefault(); mobileMove("jump"); }}
           style={{touchAction:"none"}}
         >JUMP</button>
 
         <button
           className="w-14 h-14 rounded-xl bg-black/70 border-2 border-border text-white text-2xl font-bold active:bg-primary/20 active:border-primary select-none flex items-center justify-center transition-colors"
-          onPointerDown={e=>{ e.preventDefault(); mobileMove("right"); }}
-          onPointerUp={e=>  { e.preventDefault(); mobileMove("stop");  }}
-          onPointerLeave={e=>{ e.preventDefault(); mobileMove("stop"); }}
+          onPointerDown={e=>{ if(!e.isPrimary) return; e.preventDefault(); mobileMove("right"); }}
+          onPointerUp={e=>  { if(!e.isPrimary) return; e.preventDefault(); mobileMove("stop");  }}
+          onPointerLeave={e=>{ if(!e.isPrimary) return; e.preventDefault(); mobileMove("stop"); }}
           style={{touchAction:"none"}}
         >▶</button>
       </div>
