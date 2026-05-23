@@ -66,6 +66,20 @@ export default defineConfig({
     fs: {
       strict: true,
     },
+    warmup: {
+      clientFiles: [
+        "./src/main.tsx",
+        "./src/App.tsx",
+        "./src/index.css",
+        "./src/pages/Auth.tsx",
+        "./src/pages/Game.tsx",
+        "./src/pages/Miner.tsx",
+        "./src/pages/Inventory.tsx",
+        "./src/pages/Store.tsx",
+        "./src/pages/Leaderboard.tsx",
+        "./src/components/Layout.tsx",
+      ],
+    },
   },
   preview: {
     port,
