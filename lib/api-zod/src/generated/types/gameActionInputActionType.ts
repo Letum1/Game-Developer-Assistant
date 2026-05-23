@@ -12,4 +12,6 @@ export type GameActionInputActionType = typeof GameActionInputActionType[keyof t
 export const GameActionInputActionType = {
   break: 'break',
   place: 'place',
+  plant: 'plant',  // plant oak_seed → sapling
+  grow:  'grow',   // grow sapling → oak_log (called by client timer)
 } as const;

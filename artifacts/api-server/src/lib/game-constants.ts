@@ -7,6 +7,17 @@
 export const WORLD_WIDTH  = 40;  // expanded — camera scrolls across the wider world
 export const WORLD_HEIGHT = 25;  // expanded — more depth layers for diamond/lava mining
 
+// ─── Pickaxe mining power multipliers ────────────────────────────────────────
+// Each pickaxe tier multiplies MINING_POWER (1.0 hp/s base).
+// Wood = default speed, Diamond = 7x faster.
+export const PICKAXE_POWER: Record<string, number> = {
+  pickaxe_wood:    1.0,
+  pickaxe_stone:   1.8,
+  pickaxe_iron:    2.8,
+  pickaxe_gold:    4.5,
+  pickaxe_diamond: 7.0,
+};
+
 // ─── Block break rewards ─────────────────────────────────────────────────────
 // When a player breaks a block, they earn `gems` currency and `points` (for
 // the 3-hour leaderboard revenue pool). `drop` + `dropChance` control resource drops.
@@ -18,6 +29,9 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   block_gold:          { gems: 10, points: 50,  drop: "raw_gold",    dropChance: 1.0  },
   block_diamond:       { gems: 25, points: 100, drop: "raw_diamond", dropChance: 1.0  },
   block_lava:          { gems: 5,  points: 30,  drop: "obsidian",    dropChance: 0.5  },
+  // Oak tree — breaks in one punch, drops wood + sometimes a seed
+  block_oak_sapling:   { gems: 0,  points: 0,   drop: "seed_oak",    dropChance: 1.0  },
+  block_oak_log:       { gems: 2,  points: 5,   drop: "seed_oak",    dropChance: 0.5  },
   // Machine blocks return themselves (like grass/dirt) so players can re-arrange rigs
   machine_core:        { gems: 0,  points: 0                                          },
   solar_panel_block:   { gems: 0,  points: 0                                          },
@@ -75,31 +89,39 @@ export const STORE_ITEMS = [
   { itemId: "water_bucket",      displayName: "Water Bucket",      gemCost: 20,   realCost: null, category: "cooling",    description: "Flush cooling water to reset temp gauge." },
   { itemId: "world_lock",        displayName: "World Lock",        gemCost: 500,  realCost: null, category: "locks",      description: "Lock a world to make it yours." },
   { itemId: "diamond_lock",      displayName: "Diamond Lock",      gemCost: 2500, realCost: null, category: "locks",      description: "Premium world lock with extra security." },
-  { itemId: "pickaxe_stone",     displayName: "Stone Pickaxe",     gemCost: 80,   realCost: null, category: "tools",      description: "Faster block breaking than wood." },
-  { itemId: "pickaxe_iron",      displayName: "Iron Pickaxe",      gemCost: 200,  realCost: null, category: "tools",      description: "Breaks iron and harder blocks faster." },
-  { itemId: "pickaxe_gold",      displayName: "Gold Pickaxe",      gemCost: 400,  realCost: null, category: "tools",      description: "Very fast mining speed." },
-  { itemId: "pickaxe_diamond",   displayName: "Diamond Pickaxe",   gemCost: 800,  realCost: null, category: "tools",      description: "The ultimate mining tool." },
+  { itemId: "pickaxe_stone",     displayName: "Stone Pickaxe",     gemCost: 80,   realCost: null, category: "tools",      description: "1.8× faster mining than bare hands." },
+  { itemId: "pickaxe_iron",      displayName: "Iron Pickaxe",      gemCost: 200,  realCost: null, category: "tools",      description: "2.8× mining speed — breaks iron fast." },
+  { itemId: "pickaxe_gold",      displayName: "Gold Pickaxe",      gemCost: 400,  realCost: null, category: "tools",      description: "4.5× mining speed." },
+  { itemId: "pickaxe_diamond",   displayName: "Diamond Pickaxe",   gemCost: 800,  realCost: null, category: "tools",      description: "7× mining speed — the ultimate tool." },
 ];
 
 // ─── Human-readable item names (used in toast messages, inventory UI) ────────
 export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   data_center_rig:   "Data Center Rig",
-  machine_core:      "Machine Core",       // placeable rig component
-  solar_panel_block: "Solar Panel",        // placeable power source
-  data_cable:        "Data Cable",         // placeable connector
+  machine_core:      "Machine Core",
+  solar_panel_block: "Solar Panel",
+  data_cable:        "Data Cable",
+  // Pickaxes
   pickaxe_wood:      "Wood Pickaxe",
   pickaxe_stone:     "Stone Pickaxe",
   pickaxe_iron:      "Iron Pickaxe",
   pickaxe_gold:      "Gold Pickaxe",
   pickaxe_diamond:   "Diamond Pickaxe",
+  // Seeds & wood
   seed_oak:          "Oak Seed",
+  oak_wood:          "Oak Wood",
+  block_oak_log:     "Oak Log",
+  block_oak_sapling: "Oak Sapling",
+  // Blocks
   block_dirt:        "Dirt Block",
   block_grass:       "Grass Block",
   block_rock:        "Rock Block",
+  // Resources
   raw_iron:          "Raw Iron",
   raw_gold:          "Raw Gold",
   raw_diamond:       "Raw Diamond",
   obsidian:          "Obsidian",
+  // Store items
   solar_panel:       "Solar Panel (item)",
   generator:         "Generator",
   thermal_paste:     "Thermal Paste",
@@ -119,6 +141,21 @@ export const CRAFTING_RECIPES: Record<string, {
   resultQty: number;
   unlocksMiner?: boolean;
 }> = {
+
+  // ── Data Center Rig (the main passive income device) ─────────────────────
+  data_center_rig: {
+    displayName: "Data Center Rig",
+    description: "Unlocks your passive Data Center Miner. Place machine_core + solar panels in the world to activate.",
+    ingredients: [
+      { itemId: "raw_iron",    quantity: 5 },
+      { itemId: "raw_gold",    quantity: 3 },
+      { itemId: "raw_diamond", quantity: 1 },
+    ],
+    result: "machine_core",  // placing machine_core in-world activates the rig
+    resultQty: 1,
+    unlocksMiner: true,
+  },
+
   // ── Machine building blocks ──────────────────────────────────────────────
   machine_core: {
     displayName: "Machine Core",
@@ -130,7 +167,7 @@ export const CRAFTING_RECIPES: Record<string, {
     ],
     result: "machine_core",
     resultQty: 1,
-    unlocksMiner: true,  // placing this block starts the miner
+    unlocksMiner: true,
   },
 
   solar_panel_block: {
@@ -151,7 +188,53 @@ export const CRAFTING_RECIPES: Record<string, {
       { itemId: "raw_iron", quantity: 1 },
     ],
     result: "data_cable",
-    resultQty: 3,  // craft 3 at a time (cables are abundant)
+    resultQty: 3,
+  },
+
+  // ── Pickaxe progression (Minecraft-style) ────────────────────────────────
+  // Wood → Stone → Iron → Gold → Diamond
+  // Oak wood is free from breaking trees — start cutting to unlock stone pickaxe.
+  pickaxe_stone: {
+    displayName: "Stone Pickaxe",
+    description: "1.8× faster mining. Craft from oak wood you cut from trees in the world.",
+    ingredients: [
+      { itemId: "oak_wood", quantity: 5 },
+    ],
+    result: "pickaxe_stone",
+    resultQty: 1,
+  },
+
+  pickaxe_iron: {
+    displayName: "Iron Pickaxe",
+    description: "2.8× faster mining. Breaks iron and harder blocks much faster.",
+    ingredients: [
+      { itemId: "oak_wood",  quantity: 3 },
+      { itemId: "raw_iron",  quantity: 3 },
+    ],
+    result: "pickaxe_iron",
+    resultQty: 1,
+  },
+
+  pickaxe_gold: {
+    displayName: "Gold Pickaxe",
+    description: "4.5× faster mining. Deep gold ore is worth it.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 5 },
+      { itemId: "raw_gold", quantity: 2 },
+    ],
+    result: "pickaxe_gold",
+    resultQty: 1,
+  },
+
+  pickaxe_diamond: {
+    displayName: "Diamond Pickaxe",
+    description: "7× mining speed — the ultimate tool. Destroys any block in seconds.",
+    ingredients: [
+      { itemId: "raw_gold",    quantity: 3 },
+      { itemId: "raw_diamond", quantity: 1 },
+    ],
+    result: "pickaxe_diamond",
+    resultQty: 1,
   },
 
   // ── Support / maintenance items ─────────────────────────────────────────
@@ -210,6 +293,9 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   pickaxe_gold:      "tools",
   pickaxe_diamond:   "tools",
   seed_oak:          "seeds",
+  oak_wood:          "resources",
+  block_oak_log:     "blocks",
+  block_oak_sapling: "blocks",
   block_dirt:        "blocks",
   block_grass:       "blocks",
   block_rock:        "blocks",

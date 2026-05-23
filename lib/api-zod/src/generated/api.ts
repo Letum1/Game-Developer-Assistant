@@ -85,7 +85,7 @@ export const GameActionHeader = zod.object({
 })
 
 export const GameActionBody = zod.object({
-  "actionType": zod.enum(['break', 'place']),
+  "actionType": zod.enum(['break', 'place', 'plant', 'grow']),
   "worldName": zod.string(),
   "x": zod.number(),
   "y": zod.number(),
