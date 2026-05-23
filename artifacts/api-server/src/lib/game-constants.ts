@@ -4,8 +4,8 @@
 // Change numbers here to re-balance the whole game without touching game logic.
 // ============================================================
 
-export const WORLD_WIDTH  = 20;
-export const WORLD_HEIGHT = 15;
+export const WORLD_WIDTH  = 40;  // expanded — camera scrolls across the wider world
+export const WORLD_HEIGHT = 25;  // expanded — more depth layers for diamond/lava mining
 
 // ─── Block break rewards ─────────────────────────────────────────────────────
 // When a player breaks a block, they earn `gems` currency and `points` (for
