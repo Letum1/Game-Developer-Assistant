@@ -8,7 +8,7 @@ export default function Leaderboard() {
   const { data: poolStatus } = useGetPoolStatus({ query: { refetchInterval: 10000, queryKey: getGetPoolStatusQueryKey() } });
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-8 max-w-6xl mx-auto font-mono">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-8 max-w-6xl mx-auto font-mono overflow-y-auto h-full">
       
       <div>
         <h1 className="text-3xl font-black text-primary tracking-tighter uppercase drop-shadow-[0_0_8px_rgba(34,197,94,0.5)]">

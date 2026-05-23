@@ -164,7 +164,7 @@ export default function Craft() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="p-4 md:p-8 space-y-6 max-w-5xl mx-auto font-mono"
+      className="p-4 md:p-8 space-y-6 max-w-5xl mx-auto font-mono overflow-y-auto h-full"
     >
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <div>
@@ -229,7 +229,7 @@ export default function Craft() {
             {inventory.length === 0 && (
               <span className="text-muted-foreground text-xs italic">
                 Mine blocks in the game world to gather resources.{" "}
-                <Link href="/game"><a className="text-primary underline">Go mine →</a></Link>
+                <Link href="/game" className="text-primary underline">Go mine →</Link>
               </span>
             )}
           </div>

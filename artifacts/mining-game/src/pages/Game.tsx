@@ -11,7 +11,7 @@
 //  • Multiplayer chat over WebSocket
 // ============================================================
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import {
   useGetWorld, useGameAction, useGetWallet, useGetInventory,
   getGetWorldQueryKey, getGetWalletQueryKey, getGetInventoryQueryKey,
@@ -415,6 +415,14 @@ export default function Game() {
 
   // Canvas DOM ref — all drawing happens here
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // ── Layout measurement refs ──────────────────────────────────────────────
+  // Refs for debug height measurement
+  const gameRef    = useRef<HTMLDivElement>(null);
+  const topHudRef  = useRef<HTMLDivElement>(null);
+  const ctrlBarRef = useRef<HTMLDivElement>(null);
+  const hotbarRef  = useRef<HTMLDivElement>(null);
+  const [midH, setMidH] = useState<number>(0); // px height for the canvas row
 
   // ── Server data hooks ────────────────────────────────────────────────────
   const { data: world, refetch: refetchWorld } = useGetWorld("start", {
@@ -866,7 +874,7 @@ export default function Game() {
     setZoomDisplay(newZoom);  // update UI label
   }, []);
 
-  // Scroll wheel zoom — preventDefault stops page scrolling
+  // Scroll wheel zoom (desktop) — preventDefault stops page from scrolling instead
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -877,6 +885,51 @@ export default function Game() {
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [adjustZoom]);
+
+  // Pinch-to-zoom (mobile) — two-finger pinch gesture on the canvas
+  // We capture the initial distance + zoom level when the second finger touches,
+  // then scale zoom proportionally as the fingers spread or squeeze.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Distance between two touch points (Pythagorean)
+    const getTouchDist = (touches: TouchList) => {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    let initDist = 0;   // finger distance at start of pinch
+    let initZoom = 1;   // zoom level at start of pinch
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Two fingers just placed — record baseline for this pinch gesture
+        initDist = getTouchDist(e.touches);
+        initZoom = zoomRef.current;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault(); // stop browser native pinch-zoom from taking over
+        const dist  = getTouchDist(e.touches);
+        const scale = dist / initDist;   // > 1 = spreading (zoom in), < 1 = pinching (zoom out)
+        const newZ  = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, initZoom * scale));
+        zoomRef.current = newZ;
+        setZoomDisplay(newZ);
+      }
+    };
+
+    // passive: false so we can call preventDefault() inside onTouchMove
+    canvas.addEventListener("touchstart", onTouchStart, { passive: true });
+    canvas.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    return () => {
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove",  onTouchMove);
+    };
+  }, []);
 
   // ════════════════════════════════════════════════════════════════════════
   // Canvas click handler — mine blocks OR place blocks
@@ -1034,13 +1087,24 @@ export default function Game() {
   // RENDER
   // ════════════════════════════════════════════════════════════════════════
   return (
+    // CSS Grid layout: 4 named rows.
+    //   Row 1 (auto)  — TopHUD bar
+    //   Row 2 (1fr)   — canvas + chat; 1fr fills ALL remaining space
+    //   Row 3 (auto)  — controls bar (movement buttons, etc.)
+    //   Row 4 (auto)  — hotbar strip
+    //
+    // Using CSS Grid (not flex-col) because flex-col cannot give the canvas
+    // row a "remaining height after fixed rows" without flex-grow conflicts.
+    // With Grid, the 1fr row is exactly: total height − sum of auto rows.
+    // height: 100% is explicit so the grid has a definite size to divide.
     <motion.div
+      ref={gameRef}
       initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-      className="flex flex-col h-full bg-background overflow-hidden"
+      className="flex-1 min-h-0 bg-background overflow-hidden flex flex-col"
     >
 
       {/* ── TOP HUD ────────────────────────────────────────────────────── */}
-      <div className="flex justify-between items-center px-3 py-1.5 bg-sidebar/95 border-b border-border z-10 shrink-0 gap-2">
+      <div ref={topHudRef} className="flex justify-between items-center px-3 py-1.5 bg-sidebar/95 border-b border-border z-10 shrink-0 gap-2">
 
         {/* Player callsign badge */}
         <div className="flex items-center gap-2 font-mono text-xs">
@@ -1096,104 +1160,31 @@ export default function Game() {
       </div>
 
       {/* ── CANVAS + CHAT PANEL ─────────────────────────────────────────── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      {/* flex: 1 1 0% means flex-basis=0 so this starts at ZERO height   */}
+      {/* and grows to fill all remaining space. flex-basis:0 is critical  */}
+      {/* because it prevents the canvas's 800×600 HTML intrinsic size    */}
+      {/* from leaking into the flex algorithm as the item's "natural"    */}
+      {/* height. All other rows have shrink-0, so this row = remainder.  */}
+      <div className="flex overflow-hidden" style={{ flex: "1 1 0%", minHeight: 0 }}>
 
-        {/* ── Canvas container — RELATIVE so overlays can be ABSOLUTE ──── */}
-        <div className="flex-1 bg-[#050d14] relative overflow-hidden">
-
-          {/* The game canvas — CSS fills the container, logical size is WW×WH */}
+        {/* ── Canvas container — position:relative so canvas can be absolute ─ */}
+        {/* Canvas uses absolute inset-0 so its HTML intrinsic size (800×600)   */}
+        {/* doesn't participate in the CSS layout algorithm at all.              */}
+        {/* The container height comes entirely from the CSS Grid 1fr track.    */}
+        <div className="flex-1 min-h-0 bg-[#050d14] overflow-hidden relative">
           <canvas
             ref={canvasRef}
             width={WW}
             height={WH}
             onClick={handleCanvasClick}
-            className="w-full h-full object-contain"
-            style={{ imageRendering: "pixelated", cursor: mode === "place" ? "cell" : "crosshair" }}
+            className="block"
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%",
+              imageRendering: "pixelated",
+              cursor: mode === "place" ? "cell" : "crosshair",
+            }}
           />
-
-          {/* ── ZOOM CONTROLS — top-right overlay ─────────────────────── */}
-          <div className="absolute top-2 right-2 flex flex-col gap-1 z-20">
-            <button
-              onClick={() => adjustZoom(ZOOM_STEP)}
-              className={`${ctrlBtn} w-8 h-8 rounded bg-black/70 border border-border text-primary flex items-center justify-center hover:bg-primary/20`}
-              title="Zoom in"
-            >
-              <ZoomIn className="w-4 h-4" />
-            </button>
-            <div className="text-center text-[9px] font-mono text-muted-foreground bg-black/70 rounded py-0.5">
-              {Math.round(zoomDisplay * 100)}%
-            </div>
-            <button
-              onClick={() => adjustZoom(-ZOOM_STEP)}
-              className={`${ctrlBtn} w-8 h-8 rounded bg-black/70 border border-border text-muted-foreground flex items-center justify-center hover:bg-primary/20`}
-              title="Zoom out"
-            >
-              <ZoomOut className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* ── GROWTOPIA/TERRARIA MOVEMENT CONTROLS — bottom-left overlay ─ */}
-          {/* Always on screen — works with touch AND mouse */}
-          <div className="absolute bottom-3 left-3 z-20 flex items-end gap-2">
-
-            {/* Left arrow */}
-            <button
-              className={`${ctrlBtn} w-12 h-12 rounded-lg bg-black/60 border border-white/20 text-white text-xl font-bold active:bg-white/20 backdrop-blur-sm`}
-              onPointerDown={() => mobileMove("left")}
-              onPointerUp={() => mobileMove("stop")}
-              onPointerLeave={() => mobileMove("stop")}
-              onTouchStart={(e) => { e.preventDefault(); mobileMove("left"); }}
-              onTouchEnd={() => mobileMove("stop")}
-            >◀</button>
-
-            {/* Jump button — taller, between left/right */}
-            <button
-              className={`${ctrlBtn} w-16 h-16 rounded-xl bg-primary/30 border-2 border-primary text-primary text-xs font-bold uppercase tracking-wider active:bg-primary active:text-black backdrop-blur-sm`}
-              onPointerDown={() => mobileMove("jump")}
-              onTouchStart={(e) => { e.preventDefault(); mobileMove("jump"); }}
-            >▲<br/>JUMP</button>
-
-            {/* Right arrow */}
-            <button
-              className={`${ctrlBtn} w-12 h-12 rounded-lg bg-black/60 border border-white/20 text-white text-xl font-bold active:bg-white/20 backdrop-blur-sm`}
-              onPointerDown={() => mobileMove("right")}
-              onPointerUp={() => mobileMove("stop")}
-              onPointerLeave={() => mobileMove("stop")}
-              onTouchStart={(e) => { e.preventDefault(); mobileMove("right"); }}
-              onTouchEnd={() => mobileMove("stop")}
-            >▶</button>
-          </div>
-
-          {/* ── ACTION CONTROLS — bottom-right overlay ────────────────── */}
-          <div className="absolute bottom-3 right-3 z-20 flex flex-col gap-2 items-end">
-
-            {/* Punch mode button */}
-            <button
-              onClick={() => { setMode("punch"); setSelectedBlock(null); }}
-              className={`${ctrlBtn} px-4 py-2 rounded-lg border text-xs font-mono font-bold uppercase tracking-wider backdrop-blur-sm ${
-                mode === "punch"
-                  ? "bg-red-600 border-red-500 text-white shadow-[0_0_12px_rgba(239,68,68,0.5)]"
-                  : "bg-black/60 border-white/20 text-white/60 hover:text-red-400"
-              }`}
-            >👊 Punch</button>
-
-            {/* Place mode button */}
-            <button
-              onClick={() => setMode("place")}
-              className={`${ctrlBtn} px-4 py-2 rounded-lg border text-xs font-mono font-bold uppercase tracking-wider backdrop-blur-sm ${
-                mode === "place"
-                  ? "bg-blue-600 border-blue-500 text-white shadow-[0_0_12px_rgba(59,130,246,0.5)]"
-                  : "bg-black/60 border-white/20 text-white/60 hover:text-blue-400"
-              }`}
-            >🧱 Place</button>
-          </div>
-
-          {/* ── MACHINE RIG HINT (shows when player has machine blocks) ── */}
-          {hotbarItems.some(i => MACHINE_BLOCKS.has(i.itemId)) && (
-            <div className="absolute top-2 left-2 z-20 bg-black/80 border border-primary/40 rounded px-2 py-1 text-[9px] font-mono text-primary backdrop-blur-sm max-w-[140px] leading-tight">
-              💡 Place <b>Machine Core</b> then <b>Solar Panels</b> next to it to power your rig!
-            </div>
-          )}
         </div>
 
         {/* ── CHAT PANEL (collapsible sidebar) ──────────────────────────── */}
@@ -1229,9 +1220,98 @@ export default function Game() {
         )}
       </div>
 
+      {/* ── CONTROLS BAR — always rendered below canvas, no GPU layer clash ─ */}
+      {/* Placed between canvas and hotbar so it's always visible on screen.  */}
+      {/* Keyboard (WASD/arrows/space) still works; this is for touch + mouse. */}
+      <div ref={ctrlBarRef} className="flex items-center gap-2 px-3 py-1.5 shrink-0" style={{ background: "red", minHeight: "52px", zIndex: 999, position: "relative" }}>
+
+        {/* ── Movement: ◄ JUMP ► ─────────────────────────────────────── */}
+        <div className="flex items-center gap-1">
+          <button
+            className={`${ctrlBtn} w-10 h-10 rounded-lg bg-zinc-800 border border-white/20 text-white text-lg font-bold active:bg-white/20`}
+            onPointerDown={() => mobileMove("left")}
+            onPointerUp={() => mobileMove("stop")}
+            onPointerLeave={() => mobileMove("stop")}
+            onTouchStart={(e) => { e.preventDefault(); mobileMove("left"); }}
+            onTouchEnd={() => mobileMove("stop")}
+            title="Move left"
+          >◀</button>
+
+          <button
+            className={`${ctrlBtn} w-14 h-10 rounded-lg bg-primary/30 border border-primary text-primary text-xs font-bold uppercase tracking-wide active:bg-primary active:text-black`}
+            onPointerDown={() => mobileMove("jump")}
+            onTouchStart={(e) => { e.preventDefault(); mobileMove("jump"); }}
+            title="Jump"
+          >▲ JUMP</button>
+
+          <button
+            className={`${ctrlBtn} w-10 h-10 rounded-lg bg-zinc-800 border border-white/20 text-white text-lg font-bold active:bg-white/20`}
+            onPointerDown={() => mobileMove("right")}
+            onPointerUp={() => mobileMove("stop")}
+            onPointerLeave={() => mobileMove("stop")}
+            onTouchStart={(e) => { e.preventDefault(); mobileMove("right"); }}
+            onTouchEnd={() => mobileMove("stop")}
+            title="Move right"
+          >▶</button>
+        </div>
+
+        {/* ── Divider ──────────────────────────────────────────────────── */}
+        <div className="w-px h-8 bg-border mx-1 shrink-0" />
+
+        {/* ── Mode: Punch / Place ───────────────────────────────────────── */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => { setMode("punch"); setSelectedBlock(null); }}
+            className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
+              mode === "punch"
+                ? "bg-red-600 border-red-500 text-white"
+                : "bg-zinc-800 border-white/20 text-white/60 hover:text-red-400"
+            }`}
+          >👊 Punch</button>
+
+          <button
+            onClick={() => setMode("place")}
+            className={`${ctrlBtn} px-3 py-1.5 rounded border text-[10px] font-mono font-bold uppercase tracking-wider ${
+              mode === "place"
+                ? "bg-blue-600 border-blue-500 text-white"
+                : "bg-zinc-800 border-white/20 text-white/60 hover:text-blue-400"
+            }`}
+          >🧱 Place</button>
+        </div>
+
+        {/* ── Divider ──────────────────────────────────────────────────── */}
+        <div className="w-px h-8 bg-border mx-1 shrink-0" />
+
+        {/* ── Zoom controls ────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => adjustZoom(ZOOM_STEP)}
+            className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-800 border border-border text-primary flex items-center justify-center hover:bg-primary/20`}
+            title="Zoom in"
+          ><ZoomIn className="w-3.5 h-3.5" /></button>
+
+          <span className="text-[9px] font-mono text-muted-foreground w-9 text-center">
+            {Math.round(zoomDisplay * 100)}%
+          </span>
+
+          <button
+            onClick={() => adjustZoom(-ZOOM_STEP)}
+            className={`${ctrlBtn} w-7 h-7 rounded bg-zinc-800 border border-border text-muted-foreground flex items-center justify-center hover:bg-primary/20`}
+            title="Zoom out"
+          ><ZoomOut className="w-3.5 h-3.5" /></button>
+        </div>
+
+        {/* ── Machine rig hint (when machine blocks are in hotbar) ──────── */}
+        {hotbarItems.some(i => MACHINE_BLOCKS.has(i.itemId)) && (
+          <span className="ml-auto text-[9px] font-mono text-primary shrink-0 hidden sm:block">
+            💡 Place <b>Core</b> + <b>Solar Panels</b> side-by-side to build your rig
+          </span>
+        )}
+      </div>
+
       {/* ── HOTBAR ──────────────────────────────────────────────────────── */}
       {/* Shows placeable items from inventory. Machine blocks glow green. */}
-      <div className="flex items-center gap-1.5 px-3 py-2 bg-black/90 border-t border-border shrink-0 overflow-x-auto">
+      <div ref={hotbarRef} className="flex items-center gap-1.5 px-3 py-2 bg-black/90 border-t border-border shrink-0 overflow-x-auto">
         <span className="text-muted-foreground text-[10px] uppercase font-mono tracking-wider whitespace-nowrap mr-1 shrink-0">
           Hotbar:
         </span>

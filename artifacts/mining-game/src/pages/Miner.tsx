@@ -136,7 +136,7 @@ export default function Miner() {
   const isOverheated = miner.temperature >= 100;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto font-mono">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto font-mono overflow-y-auto h-full">
       
       <div className="flex items-center justify-between">
         <div>

@@ -78,7 +78,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           {wallet && <span className="font-bold text-primary text-sm">{wallet.gems} G</span>}
         </header>
 
-        <div className="flex-1 overflow-y-auto pb-16 md:pb-0 relative z-0 min-h-0">
+        {/* overflow-hidden + flex flex-col so that children using h-full work correctly.
+            pb-14 on mobile reserves the 56px bottom nav space above content. */}
+        <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-14 md:pb-0">
           {children}
         </div>
 
