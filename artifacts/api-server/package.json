@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@types/http-proxy": "^1.17.17",
     "@types/ws": "^8.18.1",
     "@workspace/api-zod": "workspace:*",
     "@workspace/db": "workspace:*",
@@ -17,6 +18,8 @@
     "cors": "^2.8.6",
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
+    "http-proxy": "^1.18.1",
+    "http-proxy-middleware": "^4.0.0",
     "pg": "^8.20.0",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
