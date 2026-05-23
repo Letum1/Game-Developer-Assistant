@@ -1,6 +1,6 @@
 kind = "web"
-previewPath = "/"
-title = "MineVault - 2D Mining Game"
+previewPath = "/old-game/"
+title = "MineVault - 2D Mining Game (Legacy)"
 version = "1.0.0"
 id = "artifacts/game"
 router = "path"
@@ -11,11 +11,12 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/old-game/" ]
 localPort = 24631
 
 [services.development]
-run = "pnpm --filter @workspace/game run dev"
+# Point to the main production server so this entry never shows a blank screen
+run = "NODE_ENV=production pnpm --filter @workspace/api-server run start"
 
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/game", "run", "build" ]
@@ -28,4 +29,4 @@ to = "/index.html"
 
 [services.env]
 PORT = "24631"
-BASE_PATH = "/"
+BASE_PATH = "/old-game/"
