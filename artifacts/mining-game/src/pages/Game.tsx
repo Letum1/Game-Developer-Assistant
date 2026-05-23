@@ -133,33 +133,63 @@ const ZOOM_MAX  = 3.0;   // zoomed in  — pixel-level detail
 const ZOOM_STEP = 0.15;  // each zoom button press changes by this much
 
 // ─── Day/Night sky color computation ─────────────────────────────────────────
-// Returns sky gradient data and star/overlay info based on time in the cycle.
+// Returns sky gradient data and star/overlay info based on wall-clock time.
+// Uses Date.now() so all players share the same day/night cycle in real time.
+// t=0.0 midnight → t=0.25 sunrise → t=0.5 noon → t=0.75 sunset → t=1.0 midnight
 type SkyState = { r: number; g: number; b: number; alpha: number; stars: boolean };
 function getSky(now: number): SkyState {
-  const t = (now % DAY_MS) / DAY_MS;  // 0.0 (midnight) → 1.0 (next midnight)
+  // Use real wall-clock time so every player sees the same sky simultaneously
+  const t = (now % DAY_MS) / DAY_MS;
 
-  if (t < 0.12) {
-    // Midnight → dawn break — dark with reddish horizon
-    const f = t / 0.12;
-    return { r: 255, g: Math.round(80 * f), b: 0, alpha: 0.70 - 0.60 * f, stars: f < 0.6 };
-  } else if (t < 0.22) {
-    // Dawn — orange warming to blue sky
-    const f = (t - 0.12) / 0.10;
-    return { r: 255, g: Math.round(80 + 140 * f), b: Math.round(160 * f), alpha: 0.10 - 0.10 * f, stars: false };
-  } else if (t < 0.55) {
-    // Full daytime — clear bright sky, no overlay
-    return { r: 135, g: 206, b: 235, alpha: 0, stars: false };
+  if (t < 0.08) {
+    // Full night — deep navy, stars visible
+    return { r: 8, g: 10, b: 28, alpha: 0.78, stars: true };
+  } else if (t < 0.20) {
+    // Pre-dawn → dawn: indigo slowly warming to orange-peach horizon
+    const f = (t - 0.08) / 0.12;
+    return {
+      r: Math.round(8  + 220 * f),
+      g: Math.round(10 + 100 * f),
+      b: Math.round(28 -  10 * f),
+      alpha: 0.78 - 0.72 * f,
+      stars: f < 0.45,
+    };
+  } else if (t < 0.30) {
+    // Dawn → full day: sunrise orange fades to clear sky blue
+    const f = (t - 0.20) / 0.10;
+    return {
+      r: Math.round(228 - 93  * f),  // 228 → 135 (sky blue)
+      g: Math.round(110 + 96  * f),  // 110 → 206
+      b: Math.round(18  + 217 * f),  // 18  → 235
+      alpha: 0.06 - 0.06 * f,
+      stars: false,
+    };
   } else if (t < 0.68) {
-    // Dusk — sky warming to orange/red
-    const f = (t - 0.55) / 0.13;
-    return { r: 255, g: Math.round(200 - 120 * f), b: Math.round(50 - 50 * f), alpha: 0.12 * f, stars: false };
+    // Full daytime — clear bright sky blue, zero dark overlay
+    return { r: 135, g: 206, b: 235, alpha: 0, stars: false };
   } else if (t < 0.78) {
-    // Dusk → full night — darkening overlay, stars appear
+    // Dusk — sky warms from blue to golden-orange
     const f = (t - 0.68) / 0.10;
-    return { r: 255, g: Math.round(80 - 80 * f), b: 0, alpha: 0.12 + 0.58 * f, stars: f > 0.5 };
+    return {
+      r: Math.round(135 + 120 * f),  // 135 → 255
+      g: Math.round(206 - 100 * f),  // 206 → 106
+      b: Math.round(235 - 205 * f),  // 235 → 30
+      alpha: 0.06 * f,
+      stars: false,
+    };
+  } else if (t < 0.88) {
+    // Sunset → full night — darkening overlay, stars emerge
+    const f = (t - 0.78) / 0.10;
+    return {
+      r: Math.round(255 - 247 * f),
+      g: Math.round(106 -  96 * f),
+      b: Math.round(30  -   2 * f),
+      alpha: 0.06 + 0.72 * f,
+      stars: f > 0.5,
+    };
   }
-  // Full night — dark overlay, all stars visible
-  return { r: 0, g: 0, b: 20, alpha: 0.70, stars: true };
+  // Back to full night
+  return { r: 8, g: 10, b: 28, alpha: 0.78, stars: true };
 }
 
 // ─── Crack overlay renderer ──────────────────────────────────────────────────
@@ -740,6 +770,13 @@ export default function Game() {
   const [wizardAns,     setWizardAns]     = useState("");
   const [chatOpen,      setChatOpen]      = useState(false);
 
+  // ── Solar / daytime tracking — updates every 3s to keep badge accurate ──
+  // dayFactor matches the canvas renderer's value so badge never lies.
+  const [isDay, setIsDay] = useState(() => {
+    const s = getSky(Date.now());
+    return Math.max(0, 1 - s.alpha / 0.38) > 0.15;
+  });
+
   // ── World expand state ────────────────────────────────────────────────────
   // expandBusy: true while the server call is in flight (disables button)
   const [expandBusy, setExpandBusy] = useState(false);
@@ -760,6 +797,22 @@ export default function Game() {
       twinkle: Math.random() * Math.PI * 2,
     }))
   );
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Effect: keep isDay in sync with the live getSky calculation.
+  // Polling every 3 seconds is more than frequent enough for a 15-min cycle.
+  // This drives the solar badge so it always reflects the actual dayFactor
+  // used inside the canvas renderer (same formula: 1 - alpha/0.38 > 0.15).
+  // ════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    const tick = () => {
+      const s = getSky(Date.now());
+      setIsDay(Math.max(0, 1 - s.alpha / 0.38) > 0.15);
+    };
+    tick();                            // run immediately on mount
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, []);
 
   // ════════════════════════════════════════════════════════════════════════
   // Effect: sync world data from server into the local ref used by the loop
@@ -982,17 +1035,22 @@ export default function Game() {
     ctx.clearRect(0, 0, WW, WH);
 
     // ── SKY BACKGROUND (drawn before camera transform — always fills canvas) ──
-    const sky  = getSky(now);
+    // Use Date.now() so the sky matches real-world time and is consistent
+    // across all players in the same session (shared day/night cycle).
+    const sky  = getSky(Date.now());
     const grad = ctx.createLinearGradient(0, 0, 0, WH);
     if (sky.alpha > 0.35) {
-      // Night sky: dark with reddish/deep tones
+      // Night / deep dusk: use the dark sky color from getSky at top + near-black at bottom
       grad.addColorStop(0, `rgb(${sky.r},${sky.g},${sky.b})`);
-      grad.addColorStop(1, "#0a0010");
+      grad.addColorStop(1, "#04020a");
     } else {
-      // Day sky: blue gradient
-      grad.addColorStop(0,   "#1a3a5c");
-      grad.addColorStop(0.5, "#0f2035");
-      grad.addColorStop(1,   "#050d14");
+      // Daytime / dawn / dusk transition: use the ACTUAL sky color from getSky.
+      // During full day getSky returns r=135,g=206,b=235 (cornflower sky blue).
+      // During dawn/dusk it returns warm orange/pink tones.
+      // Gradient darkens slightly toward the horizon (bottom of sky band).
+      grad.addColorStop(0, `rgb(${sky.r},${sky.g},${sky.b})`);
+      grad.addColorStop(0.55, `rgb(${Math.round(sky.r * 0.78)},${Math.round(sky.g * 0.82)},${Math.round(sky.b * 0.88)})`);
+      grad.addColorStop(1,    `rgb(${Math.round(sky.r * 0.55)},${Math.round(sky.g * 0.60)},${Math.round(sky.b * 0.68)})`);
     }
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, WW, WH);
@@ -1692,11 +1750,13 @@ export default function Game() {
       {/* height. All other rows have shrink-0, so this row = remainder.  */}
       <div className="flex overflow-hidden" style={{ flex: "1 1 0%", minHeight: 0 }}>
 
-        {/* ── Canvas container — position:relative so canvas can be absolute ─ */}
-        {/* Canvas uses absolute inset-0 so its HTML intrinsic size (800×600)   */}
-        {/* doesn't participate in the CSS layout algorithm at all.              */}
-        {/* The container height comes entirely from the CSS Grid 1fr track.    */}
-        <div className="flex-1 min-h-0 bg-[#050d14] overflow-hidden relative">
+        {/* ── Canvas container — flex center so canvas stays at its natural    */}
+        {/* aspect ratio (800×600 = 4:3). On portrait mobile this prevents the */}
+        {/* canvas from stretching vertically when the container is taller than */}
+        {/* wide. Letterboxing (black bars) keep the game looking correct.      */}
+        {/* Click coords are normalized via getBoundingClientRect so they work  */}
+        {/* correctly regardless of how big or small the canvas is rendered.    */}
+        <div className="flex-1 min-h-0 bg-[#050d14] overflow-hidden relative flex items-center justify-center">
           <canvas
             ref={canvasRef}
             width={WW}
@@ -1704,8 +1764,11 @@ export default function Game() {
             onClick={handleCanvasClick}
             className="block"
             style={{
-              position: "absolute", inset: 0,
-              width: "100%", height: "100%",
+              maxWidth: "100%",
+              maxHeight: "100%",
+              width: "auto",
+              height: "auto",
+              aspectRatio: `${WW} / ${WH}`,
               imageRendering: "pixelated",
               cursor: mode === "place" ? "cell" : "crosshair",
             }}
@@ -1757,34 +1820,16 @@ export default function Game() {
             />
           </div>
 
-          {/* ── Jump button (top-right of joystick area, easier thumb reach) ── */}
-          <button
-            className="absolute bottom-4 left-24 z-20 select-none touch-none w-11 h-11 rounded-full border-2 border-primary/50 bg-black/60 text-primary text-xs font-bold font-mono active:bg-primary/30 active:border-primary"
-            style={{ touchAction: "none" }}
-            onPointerDown={() => {
-              const p = physRef.current;
-              if (p.onGround) { p.vy = JUMP_VY; p.onGround = false; }
-            }}
-            title="Jump (or drag joystick UP)"
-          >
-            <span className="block text-center leading-none text-[10px] mt-0.5 text-primary/60">JMP</span>
-            <span className="block text-center leading-none">▲</span>
-          </button>
-
           {/* ── Solar power status badge (top-right of canvas) ───────────── */}
-          {(() => {
-            const t2 = (performance.now() % DAY_MS) / DAY_MS;
-            const isNight = t2 < 0.12 || t2 > 0.68;
-            return (
-              <div className={`absolute top-2 right-2 z-10 px-2 py-1 rounded border font-mono text-[9px] font-bold ${
-                isNight
-                  ? "border-zinc-600 text-zinc-400 bg-black/70"
-                  : "border-yellow-500/50 text-yellow-300 bg-black/70"
-              }`}>
-                {isNight ? "🌙 NIGHT — no solar" : "☀ SOLAR ACTIVE"}
-              </div>
-            );
-          })()}
+          {/* isDay state updates every 3s and uses the same dayFactor       */}
+          {/* formula as the canvas renderer — badge always matches reality. */}
+          <div className={`absolute top-2 right-2 z-10 px-2 py-1 rounded border font-mono text-[9px] font-bold ${
+            isDay
+              ? "border-yellow-500/50 text-yellow-300 bg-black/70"
+              : "border-zinc-600 text-zinc-400 bg-black/70"
+          }`}>
+            {isDay ? "☀ SOLAR ACTIVE" : "🌙 NIGHT — no solar"}
+          </div>
         </div>
 
         {/* ── CHAT PANEL (collapsible sidebar) ──────────────────────────── */}

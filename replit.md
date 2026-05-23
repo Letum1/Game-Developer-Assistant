@@ -4,60 +4,139 @@ A multiplayer 2D sandbox mining game where players break blocks, earn gems, and 
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
-- `pnpm --filter @workspace/game run dev` — run the game frontend (port 24631)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+```bash
+# Development
+pnpm --filter @workspace/api-server run dev      # API server on port 8080
+pnpm --filter @workspace/mining-game run dev     # Game frontend (Vite dev server)
+
+# Production build + start
+PORT=23242 BASE_PATH=/ pnpm --filter @workspace/mining-game run build
+pnpm --filter @workspace/api-server run build
+PORT=8080 NODE_ENV=production pnpm --filter @workspace/api-server run start
+
+# Database
+pnpm --filter @workspace/db run push             # push Drizzle schema changes (dev only)
+
+# API codegen (run after editing openapi.yaml)
+pnpm --filter @workspace/api-spec run codegen    # regenerates hooks + Zod schemas
+
+# Typecheck
+pnpm run typecheck                               # full typecheck across all packages
+```
+
+**Required env var:** `DATABASE_URL` — Postgres connection string (set in Replit Secrets)
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5 with `pg` pool for raw SQL game queries
-- DB: PostgreSQL + Drizzle ORM
-- Frontend: React + Vite + HTML5 Canvas
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+| Layer | Tech |
+|-------|------|
+| Monorepo | pnpm workspaces, Node.js 24, TypeScript 5.9 |
+| Frontend | React 18 + Vite + HTML5 Canvas (800×600 logical) |
+| Backend | Express 5 (wildcard syntax: `/{*path}` not bare `*`) |
+| Database | PostgreSQL + Drizzle ORM + raw `pg` Pool for game routes |
+| Validation | Zod v4, drizzle-zod |
+| API codegen | Orval (from OpenAPI spec at `lib/api-spec/openapi.yaml`) |
+| Build | esbuild (CJS bundle for server) |
 
-## Where things live
+## Project Layout
 
-- `lib/api-spec/openapi.yaml` — API contract (source of truth)
-- `lib/db/src/schema/` — DB schema (users, wallets, miners, inventories, worlds, active_tasks)
-- `artifacts/api-server/src/routes/` — All game API routes
-- `artifacts/api-server/src/lib/game-constants.ts` — Block rewards, miner rates, store items
-- `artifacts/game/src/pages/` — React pages (Game, Miner, Inventory, Store, Leaderboard, Auth)
-- `artifacts/game/src/components/Layout.tsx` — Navigation sidebar/bottom tabs
+```
+artifacts/
+  api-server/        Express 5 API server (game backend)
+    src/
+      app.ts          Express app entry — SPA fallback uses /{*path}
+      routes/         One file per API domain:
+        auth.ts         POST /api/auth/login  (SHA256 + localStorage userId)
+        world.ts        GET  /api/world/:name  (block grid), POST /api/world/:name/action
+        inventory.ts    GET  /api/inventory
+        wallet.ts       GET  /api/wallet
+        miner.ts        GET/POST /api/miner  (passive income, temperature, cooling)
+        store.ts        GET/POST /api/store  (buy items with gems)
+        leaderboard.ts  GET  /api/leaderboard + 3h revenue pool timer
+        chat.ts         GET/POST /api/chat
+      lib/
+        game-constants.ts  Block rewards, miner rates, store catalogue, DAY_MS
+        db-pool.ts         pg Pool (raw SQL with row-level locking)
 
-## Architecture decisions
+  mining-game/       React + Vite frontend
+    src/
+      pages/
+        Game.tsx       Main 2D canvas game (1988 lines — see section below)
+        Miner.tsx      Passive miner dashboard
+        Inventory.tsx  Item list
+        Store.tsx      Gem shop
+        Leaderboard.tsx Revenue pool standings
+        Auth.tsx       Login / register
+      components/
+        Layout.tsx     Navigation sidebar / bottom tabs
+      lib/
+        custom-fetch.ts  Injects x-user-id header on every API call
 
-- Authentication uses simple SHA256 hash + userId stored in localStorage, passed via `x-user-id` header on every API call (auto-injected by custom-fetch.ts)
-- Game actions are fully server-validated with a fatigue system (50/100 action thresholds) and a rolling 2-minute rapid-fire detector for wizard challenge
-- The 3-hour revenue pool payout runs via `setInterval` in the leaderboard router — distributes 70% of simulated ad pool to users by window_points share
-- Miner balance ticks locally every 100ms using `ratePerSecond * elapsed` math for visual dopamine; server sync happens every 30 seconds
-- Block-breaking uses PostgreSQL row-level locking (`FOR UPDATE`) to prevent race conditions
+lib/
+  api-spec/openapi.yaml   API contract (source of truth for codegen)
+  db/src/schema/          Drizzle schema: users, wallets, miners, inventories,
+                          worlds, active_tasks
+```
 
-## Product
+## Game.tsx Architecture (the big file)
 
-- **2D Canvas World**: 20×15 grid, 7 block types, player character with physics and touch/keyboard controls
-- **Mining Loop**: Break blocks → earn gems + window_points + item drops, with anti-cheat fatigue scaling
-- **Data Center Miner**: Level 1-10, 1-50 sats/day, temperature rises over 24h, requires water_bucket or thermal_paste to cool
-- **Monetization Tasks**: 15-second verified ad tasks (drill_boost, cool_down) with server-side timestamp verification
-- **Revenue Pool**: 3-hour cycle distributes 70% of simulated ad pool by player activity score
-- **Store**: Buy pickaxes, solar panels, generators, cooling items, world locks with gems
+`artifacts/mining-game/src/pages/Game.tsx` (~2000 lines) is the heart of the game.
+Key sections (in order):
 
-## User preferences
+1. **Constants** — WW/WH (800×600 canvas), BS (block size), MOVE_SPEED, JUMP_VY, DAY_MS (15 min cycle), REACH
+2. **Block data** — BLOCK_COLORS, BLOCK_TINTS, BLOCK_HITS, BLOCK_LABELS, PLACEABLE set, MACHINE_BLOCKS set
+3. **`getSky(now)`** — Returns sky gradient + overlay alpha for day/night cycle. Takes `Date.now()` (wall-clock) so all players share the same sky. Full day: t=0.30–0.68 (38% of cycle ≈ 5.7 min). Returns `{ r, g, b, alpha, stars }`.
+4. **Pixel-art renderers** — `drawMachineCore`, `drawSolarPanel`, `drawPipe`, `drawLampBlock`, `drawCracks`, `drawPunchFlash`, `drawWaterSplash`
+5. **Solar network BFS** — `isSolarPanelExposed`, `isSolarPanelWired`, `isCoreConnectedToPower` — determines whether machine blocks are powered
+6. **Light map** — `buildLightMap(bd)` computes per-block sunlight exposure (0.0–1.0) via flood fill
+7. **React component** — `Game()` with:
+   - Refs: `canvasRef`, `physRef` (player physics), `worldRef`, `camRef`, `zoomRef`, `rafRef`, `breakingRef`, `flashRef`, `waterSplashRef`, `lightMapRef`, `starsRef`
+   - State: `mode` (punch/place), `selectedBlock`, `wizard`, `chatOpen`, `isDay` (solar badge, 3s poll)
+   - **`drawFrame`** — `useCallback` rAF loop: clear → sky → stars → sun/moon → camera transform → blocks → player → lamp halos → restore → night overlay → scanlines
+   - Physics: gravity, velocity, collision detection against solid blocks, camera follow
+   - Joystick: pointer capture on a 90×90 div overlay; horizontal = move, drag up 40% = jump
+   - Canvas click: normalizes coords via `getBoundingClientRect` → world coords → mine/place/water-bucket
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+## API Routes Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/login` | Login or register (returns userId + username) |
+| GET | `/api/world/:name` | Fetch block grid + metadata |
+| POST | `/api/world/:name/action` | Break / place / maintain a block |
+| POST | `/api/world/:name/expand` | Spend 200 gems to add 5 columns |
+| GET | `/api/inventory` | Player item list |
+| GET | `/api/wallet` | Gems + action count |
+| GET | `/api/miner` | Passive miner state (level, temp, balance) |
+| POST | `/api/miner/upgrade` | Level up miner (costs gems) |
+| POST | `/api/miner/collect` | Collect accumulated miner balance |
+| POST | `/api/miner/task` | Start a 15s ad task (drill_boost / cool_down) |
+| POST | `/api/miner/task/complete` | Complete task + claim reward |
+| GET | `/api/store` | Store catalogue |
+| POST | `/api/store/buy` | Buy an item with gems |
+| GET | `/api/leaderboard` | Top players + revenue pool state |
+| GET | `/api/chat` | Last 50 chat messages |
+| POST | `/api/chat` | Send a chat message |
+
+## Key Architecture Decisions
+
+- **Auth**: SHA256 hash + userId stored in `localStorage`, sent as `x-user-id` header on every request (injected by `custom-fetch.ts`). No session cookies.
+- **Game actions**: Server-validated with fatigue system (warn at 50, cap at 100 actions/window). Rolling 2-min rapid-fire detector triggers `wizardChallenge` anti-bot CAPTCHA.
+- **Block breaking**: PostgreSQL row-level locking (`SELECT … FOR UPDATE`) prevents race conditions in multiplayer.
+- **Passive miner balance**: Ticks locally every 100ms for visual dopamine (`ratePerSecond × elapsed`); syncs with server every 30s.
+- **Revenue pool**: 3-hour cycle distributes 70% of simulated ad pool to players by `window_points` share. Timer lives in-memory in `leaderboard.ts` — restarting server resets the clock.
+- **Day/night cycle**: `getSky(Date.now())` — uses wall-clock time so all players share the same sky. 15-minute full cycle (`DAY_MS = 900_000`). Solar panels only generate power when `dayFactor > 0.15`.
+- **Express 5 wildcard**: SPA fallback must use `app.get("/{*path}", ...)` — bare `"*"` fails in Express 5.
+- **Canvas aspect ratio**: Canvas is 800×600 (4:3). CSS uses `maxWidth/maxHeight: 100%, width/height: auto, aspectRatio` so portrait mobile letterboxes rather than stretches. Click coords always normalised via `getBoundingClientRect`.
 
 ## Gotchas
 
-- Always run `pnpm --filter @workspace/api-spec run codegen` after modifying `openapi.yaml` before starting the API server
-- The `pg` Pool in `artifacts/api-server/src/lib/db-pool.ts` is used for game routes (raw SQL with transactions); Drizzle ORM is used by the `@workspace/db` lib
-- The revenue pool state (`simulatedAdPool`, `lastCycleTime`) is in-memory in `leaderboard.ts` — restarting the server resets the cycle timer
+- Always run `pnpm --filter @workspace/api-spec run codegen` after editing `openapi.yaml`
+- The `pg` Pool (`db-pool.ts`) is for game routes (raw SQL + transactions); Drizzle ORM is used by the `@workspace/db` lib for schema management
+- Revenue pool state is in-memory — server restart resets the 3h cycle timer
+- `DAY_MS` is defined in `game-constants.ts` on the server AND duplicated as a constant in `Game.tsx` — keep them in sync if you change the cycle length
+- Block type strings (e.g. `"stone"`, `"machine_core"`) must match between `BLOCK_COLORS` in Game.tsx and the server's block validation whitelist
 
-## Pointers
+## User preferences
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Add developer comments to code files so the codebase is readable for future developers
