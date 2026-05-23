@@ -48,8 +48,9 @@ if (process.env.NODE_ENV === "production") {
   // compiled API bundle at dist/ that resolves to ../../mining-game/dist/public
   const staticPath = path.join(__dirname, "../../mining-game/dist/public");
   app.use(express.static(staticPath));
-  // SPA fallback — unknown paths return index.html so React Router works
-  app.get("*", (_req, res) => {
+  // SPA fallback — unknown paths return index.html so client-side routing works
+  // Express 5 requires a named wildcard parameter instead of bare *
+  app.get("/{*path}", (_req, res) => {
     res.sendFile(path.join(staticPath, "index.html"));
   });
 } else {

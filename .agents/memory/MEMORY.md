@@ -1,0 +1,1 @@
+- [Production mode setup](production-mode.md) — Express 5 wildcard bug + how to run the game in production mode for fast mobile loads
