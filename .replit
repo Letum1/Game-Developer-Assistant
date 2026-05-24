@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-20", "web", "bash"]
 
 [deployment]
 router = "application"
@@ -33,7 +33,7 @@ args = "PORT=8080 NODE_ENV=production pnpm --filter @workspace/api-server run st
 waitForPort = 8080
 
 [agent]
-stack = "PNPM_WORKSPACE"
+stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
 
 [postMerge]
@@ -55,3 +55,6 @@ externalPort = 3001
 [[ports]]
 localPort = 24631
 externalPort = 3000
+
+[nix]
+channel = "stable-25_05"
