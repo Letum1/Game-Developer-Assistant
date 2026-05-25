@@ -218,7 +218,16 @@ router.post("/game/action", async (req, res) => {
         );
       }
 
-      if (MACHINE_BLOCK_TYPES.has(block)) await updateMinerFromWorld(client, userId, grid);
+      // updateMinerFromWorld is best-effort — any error here must NOT roll back
+      // the block break. The block is already removed from the world; silently
+      // log the failure and let the transaction commit regardless.
+      if (MACHINE_BLOCK_TYPES.has(block)) {
+        try {
+          await updateMinerFromWorld(client, userId, grid);
+        } catch (minerErr) {
+          req.log.warn({ minerErr }, "updateMinerFromWorld failed on break — miner state not updated but break committed");
+        }
+      }
 
       await client.query("COMMIT");
       res.json({ success:true, gemsGained, pointsAwarded:pointsGained, dropItem, currentActions, wizardChallenge });
@@ -249,8 +258,19 @@ router.post("/game/action", async (req, res) => {
         "UPDATE inventories SET quantity=quantity-1 WHERE user_id=$1 AND item_id=$2", [userId, placeBlock]
       );
 
+      // updateMinerFromWorld is best-effort — any SQL error here must NOT roll
+      // back the block placement. The block is already written to the world;
+      // the miner-state sync is a bonus that cannot be allowed to undo the placement.
+      // This defensive wrapper also protects against stale compiled bundles on
+      // artifact preview workflows that may not have been restarted after schema fixes.
       const isMachine = MACHINE_BLOCK_TYPES.has(placeBlock);
-      if (isMachine) await updateMinerFromWorld(client, userId, grid);
+      if (isMachine) {
+        try {
+          await updateMinerFromWorld(client, userId, grid);
+        } catch (minerErr) {
+          req.log.warn({ minerErr }, "updateMinerFromWorld failed on place — miner state not updated but placement committed");
+        }
+      }
 
       await client.query("COMMIT");
       res.json({ success:true, gemsGained:null, pointsAwarded:null, dropItem:null, currentActions, wizardChallenge:false, machineUpdated:isMachine });
