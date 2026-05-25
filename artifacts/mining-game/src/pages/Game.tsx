@@ -1188,16 +1188,22 @@ export default function Game() {
           }
 
           // ── SUNLIGHT SHADOW OVERLAY (per block) ───────────────────────
-          // Underground blocks are dark; surface/sky blocks are lit by the sun.
-          // Machine blocks emit their own light so get a lighter overlay.
+          // During full daytime (dayFactor = 1) there is zero darkness —
+          // sunlight illuminates everything. As the sun sets, nightFactor
+          // rises from 0 → 1 and shadow builds up block by block.
+          // Machine blocks emit their own glow so never go fully dark.
           if (lm) {
             const baseLight  = lm[gy]?.[gx] ?? 0.1;
             const isMachine  = MACHINE_BLOCKS.has(blk);
-            // Machines glow, so they never go fully dark (min 0.35 light)
+            // Machines glow so they're clamped to a minimum brightness
             const lightLevel = isMachine ? Math.max(0.35, baseLight) : baseLight;
-            // At night, even lit surface blocks get an extra darkness penalty
-            const nightBoost = (1 - dayFactor) * 0.45;
-            const darkness   = Math.min(0.92, (1 - lightLevel) * 0.88 + nightBoost);
+            // nightFactor: 0 at noon (no shadow), 1 at midnight (full shadow)
+            const nightFactor = 1 - dayFactor;
+            // Underground shadow is proportional to depth AND how dark it is outside
+            const baseDark   = (1 - lightLevel) * 0.88 * nightFactor;
+            // Extra blanket darkness that covers the whole world at night
+            const nightBoost = nightFactor * 0.45;
+            const darkness   = Math.min(0.92, baseDark + nightBoost);
             if (darkness > 0.03) {
               ctx.fillStyle = `rgba(0,0,12,${darkness})`;
               ctx.fillRect(gx * BS, gy * BS, BS, BS);
