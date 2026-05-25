@@ -98,14 +98,21 @@ async function updateMinerFromWorld(
   }
 
   if (bestCores > 0 && bestSolars > 0) {
+    // Machine core + solar panel connected — unlock and start the miner.
+    // Level is capped at 10 (max MINER_RATES key); `level` column drives
+    // ratePerSecond at read-time via formatMiner(), so we don't store a
+    // separate rate column (it doesn't exist on the schema).
     const level = Math.min(10, bestSolars);
-    const ratePerSecond = MINER_RATES[level] ?? MINER_RATES[1];
     await client.query(
-      `UPDATE miners SET unlocked=true, is_running=true, solar_panels=$1, miner_level=$2, rate_per_second=$3 WHERE user_id=$4`,
-      [bestSolars, level, ratePerSecond, userId]
+      `UPDATE miners SET unlocked=true, is_running=true, solar_panels=$1, level=$2 WHERE user_id=$3`,
+      [bestSolars, level, userId]
     );
   } else if (bestCores === 0) {
+    // No machine core in the world — rig is offline.
     await client.query("UPDATE miners SET is_running=false WHERE user_id=$1", [userId]);
+  } else {
+    // Machine core exists but no solar panel connected — rig has no power.
+    await client.query("UPDATE miners SET is_running=false, solar_panels=0 WHERE user_id=$1", [userId]);
   }
 }
 

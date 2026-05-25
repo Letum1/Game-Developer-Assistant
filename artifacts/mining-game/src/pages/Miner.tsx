@@ -135,9 +135,37 @@ export default function Miner() {
   const tempColor = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
 
+  // Rig needs at least one power source (solar panel in world OR generator from store)
+  // to generate passive income. Without power it's always offline.
+  const hasPower = (miner.solarPanels ?? 0) > 0 || (miner.generators ?? 0) > 0;
+
+  // Status label shown in the badge
+  const statusLabel = !hasPower ? "NO POWER" : isOverheated ? "OVERHEATED" : miner.isRunning ? "ONLINE" : "OFFLINE";
+  const statusClass  = !hasPower
+    ? "border-yellow-500 text-yellow-400"
+    : miner.isRunning
+    ? "border-primary text-primary"
+    : "border-destructive text-destructive";
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto font-mono overflow-y-auto h-full">
-      
+
+      {/* ── No-power warning banner ────────────────────────────────────────── */}
+      {!hasPower && (
+        <div className="border border-yellow-500/60 bg-yellow-500/5 rounded-lg p-4 flex items-start gap-3">
+          <Zap className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-yellow-400 font-bold uppercase tracking-widest text-sm">No Power Source Detected</p>
+            <p className="text-muted-foreground text-xs mt-1 leading-relaxed">
+              Your rig needs electricity before it can mine. Go to the <span className="text-primary font-bold">Game world</span> and
+              place a <span className="text-yellow-400 font-bold">Solar Panel Block</span> in open sky, then connect it to your{" "}
+              <span className="text-yellow-400 font-bold">Machine Core</span> with <span className="text-yellow-400 font-bold">Data Cables</span>.
+              Alternatively buy a <span className="text-yellow-400 font-bold">Diesel Generator</span> from the Store.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-black text-primary tracking-tighter uppercase drop-shadow-[0_0_8px_rgba(34,197,94,0.5)] flex items-center">
@@ -145,8 +173,8 @@ export default function Miner() {
           </h1>
           <p className="text-muted-foreground text-sm tracking-widest uppercase mt-1">Passive Generation Engine</p>
         </div>
-        <Badge variant="outline" className={`px-3 py-1 border ${miner.isRunning ? "border-primary text-primary" : "border-destructive text-destructive"} uppercase tracking-widest`}>
-          {miner.isRunning ? (isOverheated ? "OVERHEATED" : "ONLINE") : "OFFLINE"}
+        <Badge variant="outline" className={`px-3 py-1 border ${statusClass} uppercase tracking-widest`}>
+          {statusLabel}
         </Badge>
       </div>
 

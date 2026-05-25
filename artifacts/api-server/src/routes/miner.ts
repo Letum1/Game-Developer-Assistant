@@ -77,7 +77,10 @@ router.post("/miner/tick", async (req, res) => {
 
     const level = parseInt(m.level);
     const temp = parseFloat(m.temperature);
-    const isRunning = m.is_running && temp < MAX_TEMP;
+    // A rig needs at least one solar panel OR generator to produce any income.
+    // Without power it sits idle regardless of is_running flag.
+    const hasPower = parseInt(m.solar_panels) > 0 || parseInt(m.generators) > 0;
+    const isRunning = m.is_running && temp < MAX_TEMP && hasPower;
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp = temp;
@@ -85,11 +88,12 @@ router.post("/miner/tick", async (req, res) => {
     if (isRunning && elapsedSeconds > 0) {
       const rate = minerRate(level);
       newBalance += rate * elapsedSeconds;
-      // Temperature rises over time
+      // Temperature rises proportional to uptime
       newTemp = Math.min(MAX_TEMP, temp + (TEMP_RISE_PER_HOUR / 3600) * elapsedSeconds);
     }
 
-    const stillRunning = newTemp < MAX_TEMP;
+    // Rig shuts down when overheated OR when it has no power source
+    const stillRunning = newTemp < MAX_TEMP && hasPower;
 
     await client.query(
       "UPDATE miners SET current_balance = $1, temperature = $2, is_running = $3, last_tick_at = $4 WHERE user_id = $5",
