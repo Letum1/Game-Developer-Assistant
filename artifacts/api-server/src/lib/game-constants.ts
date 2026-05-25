@@ -37,17 +37,23 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   solar_panel_block:   { gems: 0,  points: 0                                          },
   data_cable:          { gems: 0,  points: 0                                          },
   lamp_block:          { gems: 0,  points: 0                                          },
+  battery_block:       { gems: 0,  points: 0                                          }, // returns itself
+  generator_block:     { gems: 0,  points: 0                                          }, // returns itself
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
 // Placing these in the world and connecting them activates the Data Rig miner.
 // lamp_block is included so it participates in BFS power routing and can be
 // lit when connected to an active solar network.
+// battery_block and generator_block are always-on power sources — the rig
+// keeps running at night (battery discharges) or without sun (generator).
 export const MACHINE_BLOCK_TYPES = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
   "lamp_block",        // underground lamp — lights up when powered
+  "battery_block",     // energy storage — charges during day, powers rig at night
+  "generator_block",   // diesel generator — always-on regardless of sunlight
 ]);
 
 // ─── Miner passive income rates (sat/day per level) ──────────────────────────
@@ -107,6 +113,8 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   machine_core:      "Machine Core",
   solar_panel_block: "Solar Panel",
   data_cable:        "Data Cable",
+  battery_block:     "Battery Block",   // energy storage for nighttime operation
+  generator_block:   "Generator Block", // always-on diesel power source
   // Pickaxes
   pickaxe_wood:      "Wood Pickaxe",
   pickaxe_stone:     "Stone Pickaxe",
@@ -297,6 +305,31 @@ export const CRAFTING_RECIPES: Record<string, {
     result: "lamp_block",
     resultQty: 2,
   },
+
+  // ── Battery Block — stores solar energy so the rig keeps running at night ──
+  battery_block: {
+    displayName: "Battery Block",
+    description: "Stores solar energy during the day. Connect to your rig to keep it running at night.",
+    ingredients: [
+      { itemId: "raw_iron",    quantity: 3 },
+      { itemId: "raw_gold",    quantity: 1 },
+    ],
+    result: "battery_block",
+    resultQty: 1,
+  },
+
+  // ── Generator Block — diesel-powered; always-on alternative to solar ───────
+  generator_block: {
+    displayName: "Generator Block",
+    description: "Diesel generator — always-on power source. Connect to your Machine Core to mine 24/7.",
+    ingredients: [
+      { itemId: "raw_iron",    quantity: 5 },
+      { itemId: "raw_gold",    quantity: 2 },
+      { itemId: "raw_diamond", quantity: 1 },
+    ],
+    result: "generator_block",
+    resultQty: 1,
+  },
 };
 
 // ─── Item category lookup (for inventory / store grouping) ───────────────────
@@ -305,6 +338,8 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   machine_core:      "machines",
   solar_panel_block: "machines",
   data_cable:        "machines",
+  battery_block:     "machines",   // energy storage block
+  generator_block:   "machines",   // always-on power block
   pickaxe_wood:      "tools",
   pickaxe_stone:     "tools",
   pickaxe_iron:      "tools",

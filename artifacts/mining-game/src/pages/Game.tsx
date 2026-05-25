@@ -58,6 +58,8 @@ const BLOCK_HITS: Record<string, number> = {
   solar_panel_block: 1,   // Power source — 1-shot to rearrange
   data_cable:        1,   // Connector — 1-shot to rearrange
   lamp_block:        1,   // Lamp — 1-shot to reposition freely
+  battery_block:     1,   // Energy storage — stores solar power for the night
+  generator_block:   1,   // Diesel generator — always-on backup power
 };
 
 // ─── Canvas fill colors per block type ───────────────────────────────────────
@@ -73,6 +75,8 @@ const BLOCK_COLORS: Record<string, string> = {
   solar_panel_block: "#0d2b2b",   // dark teal — solar panel base
   data_cable:        "#1a1a2e",   // very dark — cable conduit
   lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
+  battery_block:     "#0f1a10",   // very dark green — energy cell housing
+  generator_block:   "#1a1210",   // very dark brown/gray — diesel engine casing
 };
 
 // ─── Top-edge highlight tints (makes blocks look 3D) ────────────────────────
@@ -88,6 +92,8 @@ const BLOCK_TINTS: Record<string, string> = {
   solar_panel_block: "rgba(255,220,50,0.20)",  // gold tint — solar cells
   data_cable:        "rgba(34,197,94,0.10)",   // faint green data line
   lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
+  battery_block:     "rgba(34,220,120,0.25)",  // bright green — energy glow
+  generator_block:   "rgba(255,100,30,0.20)",  // warm orange — exhaust heat
 };
 
 // ─── Hotbar label names ───────────────────────────────────────────────────────
@@ -99,7 +105,9 @@ const BLOCK_LABELS: Record<string, string> = {
   solar_panel_block: "SolarPnl",
   data_cable:        "Pipe",
   water_bucket:      "H₂O",
-  lamp_block:        "Lamp",   // underground light source
+  lamp_block:        "Lamp",       // underground light source
+  battery_block:     "Battery",    // energy storage — keeps rig alive at night
+  generator_block:   "Generator",  // always-on diesel power source
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -116,13 +124,24 @@ const PLACEABLE = new Set([
   "solar_panel_block",
   "data_cable",
   "water_bucket",
-  "lamp_block",    // powered lamp — connect to solar network for light
+  "lamp_block",      // powered lamp — connect to solar network for light
+  "battery_block",   // stores solar energy; keeps the rig running at night
+  "generator_block", // diesel generator — always-on; no sun needed
 ]);
 
 // ─── Machine block types set (for special rendering / detection) ─────────────
-// lamp_block is in this set so it benefits from machine light treatment in the
-// shadow overlay (won't go fully dark) and participates in BFS power check.
-const MACHINE_BLOCKS = new Set(["machine_core", "solar_panel_block", "data_cable", "lamp_block"]);
+// All blocks in this set:
+//  • Get the machine "never fully dark" treatment in the shadow overlay
+//  • Participate in BFS power routing
+//  • lamp_block lights up when powered; battery/generator are always-on sources
+const MACHINE_BLOCKS = new Set([
+  "machine_core",
+  "solar_panel_block",
+  "data_cable",
+  "lamp_block",
+  "battery_block",   // energy storage — charges by day, powers rig at night
+  "generator_block", // diesel generator — provides power regardless of sun
+]);
 
 // ─── Max punch reach in block-units ─────────────────────────────────────────
 const REACH = 3.5;
@@ -482,6 +501,119 @@ function drawDataCable(ctx: CanvasRenderingContext2D, bx: number, by: number, ac
   ctx.shadowBlur = 0;
 }
 
+// ─── Battery Block renderer ───────────────────────────────────────────────────
+// Draws a chunky energy cell with glowing charge bars.
+// When charged (active = true) the bars pulse green; when empty they're dark.
+function drawBatteryBlock(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+) {
+  const x = bx * BS;
+  const y = by * BS;
+
+  // Dark housing
+  ctx.fillStyle = "#0f1a10";
+  ctx.fillRect(x, y, BS, BS);
+
+  // Housing border — steel frame
+  ctx.fillStyle = "#1e2e1f";
+  ctx.fillRect(x + 2, y + 2, BS - 4, BS - 4);
+
+  // Positive terminal nub on top
+  ctx.fillStyle = active ? "#22c55e" : "#374151";
+  ctx.fillRect(x + BS / 2 - 4, y + 2, 8, 4);
+
+  // Three charge bars — light up from bottom when active
+  const barColors = active
+    ? ["rgba(34,197,94,0.9)", "rgba(34,197,94,0.75)", "rgba(34,197,94,0.55)"]
+    : ["rgba(55,65,81,0.8)",  "rgba(55,65,81,0.6)",   "rgba(55,65,81,0.4)"];
+  const pulse = active ? 0.6 + 0.4 * Math.sin(time / 500) : 1;
+  for (let i = 0; i < 3; i++) {
+    const barY = y + BS - 10 - i * 10;
+    ctx.fillStyle = barColors[i];
+    ctx.globalAlpha = i === 0 ? pulse : 1;
+    ctx.fillRect(x + 6, barY, BS - 12, 6);
+    ctx.globalAlpha = 1;
+  }
+
+  if (active) {
+    // Animated charge spark moving upward
+    const spark = ((time / 800) % 1.0);
+    const sparkY = y + BS - 8 - spark * (BS - 16);
+    ctx.fillStyle = `rgba(134,239,172,${0.8 + 0.2 * Math.sin(time / 200)})`;
+    ctx.fillRect(x + BS / 2 - 2, sparkY, 4, 6);
+    ctx.shadowColor = "#22c55e";
+    ctx.shadowBlur  = 8;
+  }
+
+  // Outer border
+  ctx.strokeStyle = active ? "rgba(34,197,94,0.5)" : "rgba(100,120,100,0.3)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+  ctx.shadowBlur  = 0;
+}
+
+// ─── Generator Block renderer ─────────────────────────────────────────────────
+// Draws a diesel generator — chunky engine block with exhaust pipe and warning light.
+// Always-on power source that doesn't need sunlight.
+function drawGeneratorBlock(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+) {
+  const x = bx * BS;
+  const y = by * BS;
+
+  // Engine body — dark industrial gray
+  ctx.fillStyle = "#1a1210";
+  ctx.fillRect(x, y, BS, BS);
+  ctx.fillStyle = "#2a1e18";
+  ctx.fillRect(x + 2, y + 6, BS - 4, BS - 8);
+
+  // Exhaust pipe on top — small chimney
+  ctx.fillStyle = "#111";
+  ctx.fillRect(x + BS - 12, y + 2, 6, 8);
+  ctx.fillStyle = "#333";
+  ctx.fillRect(x + BS - 13, y + 2, 8, 3);
+
+  // Exhaust smoke when running
+  if (active) {
+    const smokeT = (time / 700) % 1.0;
+    const smokeY = y + 2 - smokeT * 10;
+    const smokeAlpha = (1 - smokeT) * 0.5;
+    ctx.fillStyle = `rgba(180,160,140,${smokeAlpha})`;
+    ctx.beginPath();
+    ctx.arc(x + BS - 9, smokeY, 3 + smokeT * 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Engine cooling fins — horizontal ridges
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = "#3a2a22";
+    ctx.fillRect(x + 4, y + 12 + i * 8, BS - 8, 4);
+  }
+
+  // Warning / status light — top left corner
+  const blinkOn = active ? Math.sin(time / 400) > 0 : false;
+  ctx.fillStyle = blinkOn ? "#ef4444" : (active ? "#7f1d1d" : "#374151");
+  ctx.beginPath();
+  ctx.arc(x + 8, y + 8, 4, 0, Math.PI * 2);
+  ctx.fill();
+  if (blinkOn) {
+    ctx.shadowColor = "#ef4444";
+    ctx.shadowBlur  = 8;
+    ctx.fill();
+  }
+
+  // Output power terminals at the bottom
+  ctx.fillStyle = active ? "#f59e0b" : "#374151";
+  ctx.fillRect(x + 6,      y + BS - 6, 8, 4); // positive terminal
+  ctx.fillRect(x + BS - 14, y + BS - 6, 8, 4); // negative terminal
+
+  // Outer border
+  ctx.strokeStyle = active ? "rgba(245,158,11,0.45)" : "rgba(120,100,80,0.3)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+  ctx.shadowBlur  = 0;
+}
+
 // ─── Client-side machine adjacency check ─────────────────────────────────────
 // Returns true if a machine_core at (gx,gy) has at least one solar_panel_block
 // or data_cable adjacent to it — used for the active glow visual only.
@@ -520,17 +652,26 @@ function isSolarPanelWired(grid: string[][], gx: number, gy: number): boolean {
 }
 
 // ─── BFS Power Chain ─────────────────────────────────────────────────────────
-// Returns true if machine_core at (gx,gy) has a cable/block path back to a
-// solar panel that is BOTH exposed to open sky AND daytime.
-// At night or when panels are covered = all cores go offline.
+// Returns true if machine_core at (gx,gy) has a cable/block path back to ANY
+// active power source:
+//   • solar_panel_block — only when exposed to open sky AND daytime
+//   • battery_block     — always active (charged during day, discharges at night)
+//   • generator_block   — always active (diesel; no sun required)
+// All three block types act as BFS seeds; the flood-fill then travels through
+// MACHINE_BLOCKS (cables, lamps, etc.) to reach the target core.
 function isCoreConnectedToPower(grid: string[][], gx: number, gy: number, dayFactor: number): boolean {
   const visited = new Set<string>();
   const queue: [number, number][] = [];
 
-  // Seed BFS only from solar panels that are actually generating power right now
+  // Seed from every powered source in the grid
   for (let y = 0; y < grid.length; y++) {
     for (let x = 0; x < (grid[y]?.length ?? 0); x++) {
-      if (grid[y][x] === "solar_panel_block" && isSolarPanelExposed(grid, x, y, dayFactor)) {
+      const blk = grid[y][x];
+      const isPowered =
+        (blk === "solar_panel_block" && isSolarPanelExposed(grid, x, y, dayFactor)) ||
+        blk === "battery_block"   || // stores solar charge — works day and night
+        blk === "generator_block";   // diesel — always on
+      if (isPowered) {
         const k = `${x},${y}`;
         visited.add(k);
         queue.push([x, y]);
@@ -538,7 +679,7 @@ function isCoreConnectedToPower(grid: string[][], gx: number, gy: number, dayFac
     }
   }
 
-  // Flood-fill through cables and machine blocks to reach target core
+  // Flood-fill through all MACHINE_BLOCKS to reach the target position
   while (queue.length > 0) {
     const [cx, cy] = queue.shift()!;
     if (cx === gx && cy === gy) return true;
@@ -1172,6 +1313,17 @@ export default function Game() {
             // Lamp lights up when connected to an active solar network via BFS
             const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawLampBlock(ctx, gx, gy, lit, now);
+
+          } else if (blk === "battery_block") {
+            // Battery is "active" whenever it is part of any powered network
+            // (solar during day, or its own stored charge at night)
+            const charged = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawBatteryBlock(ctx, gx, gy, charged, now);
+
+          } else if (blk === "generator_block") {
+            // Generator is always running — it powers the network, not the other
+            // way around, so we just pass active=true at all times
+            drawGeneratorBlock(ctx, gx, gy, true, now);
 
           } else {
             // Standard terrain block: base color + top highlight + border

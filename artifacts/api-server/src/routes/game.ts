@@ -23,11 +23,13 @@ const router: IRouter = Router();
 const actionTimestamps: Map<number, number[]> = new Map();
 
 // ─── Self-drop blocks: breaking returns the same block to inventory ───────────
-// lamp_block returns itself so players can reposition their lighting freely.
+// Machine blocks all return themselves so players can rearrange rigs freely.
 const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
   "lamp_block",
+  "battery_block",   // returns itself so players can rearrange energy storage
+  "generator_block", // returns itself so players can rearrange generators
 ]);
 
 // ─── Oak tree blocks: breaking gives oak_wood (not the block itself) ─────────
@@ -51,7 +53,11 @@ function scanMachineCluster(
     const blk = grid[cy]?.[cx];
     if (!blk || !MACHINE_BLOCK_TYPES.has(blk)) continue;
     if (blk === "machine_core")      coreCount++;
+    // All three block types count as "power sources" for the cluster.
+    // battery_block and generator_block always contribute regardless of time of day.
     if (blk === "solar_panel_block") solarCount++;
+    if (blk === "battery_block")     solarCount++; // counts as 1 solar equivalent
+    if (blk === "generator_block")   solarCount += 2; // generator = 2 panels worth
     for (const [dx, dy] of dirs) {
       const nx = cx+dx, ny = cy+dy, key = `${nx},${ny}`;
       if (nx<0||ny<0||nx>=cols||ny>=rows||visited.has(key)) continue;
