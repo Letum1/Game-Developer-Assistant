@@ -10,6 +10,7 @@ import {
 import {
   MINER_RATES,
   MINER_UPGRADE_COSTS,
+  UPGRADE_POINTS_REQUIRED,
   TEMP_RISE_PER_HOUR,
   MAX_TEMP,
   MAX_FUEL,
@@ -21,11 +22,16 @@ import {
 const router: IRouter = Router();
 
 function minerRate(level: number): number {
-  return MINER_RATES[level] ?? MINER_RATES[10];
+  // Clamp to ceiling tier (9) if somehow above it
+  return MINER_RATES[Math.min(level, 9)] ?? MINER_RATES[9];
 }
 
 function formatMiner(m: Record<string, unknown>) {
   const level = parseInt(m.level as string);
+  // Gem cost for the NEXT upgrade (null if at ceiling)
+  const nextUpgradeCost   = MINER_UPGRADE_COSTS[level] ?? null;
+  // Activity points required for the NEXT upgrade (null if at ceiling)
+  const nextUpgradePoints = UPGRADE_POINTS_REQUIRED[level] ?? null;
   return {
     userId: m.user_id,
     level,
@@ -39,6 +45,8 @@ function formatMiner(m: Record<string, unknown>) {
     lastMaintenanceAt: (m.last_maintenance_at as Date).toISOString(),
     lastTickAt: (m.last_tick_at as Date).toISOString(),
     ratePerSecond: minerRate(level),
+    nextUpgradeCost,
+    nextUpgradePoints,
   };
 }
 
@@ -164,19 +172,40 @@ router.post("/miner/upgrade", async (req, res) => {
     const m = minerRes.rows[0];
     const level = parseInt(m.level);
 
-    if (level >= 10) {
+    // Level 9 is the hidden platform ceiling — give a vague message
+    if (level >= 9) {
       await client.query("ROLLBACK");
-      res.status(400).json({ error: "Max level reached" });
+      res.status(400).json({ error: "Your rig is already operating at peak efficiency." });
       return;
     }
 
     const cost = MINER_UPGRADE_COSTS[level];
+    if (!cost) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Upgrade unavailable." });
+      return;
+    }
+
     const walletRes = await client.query("SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE", [userId]);
     const wallet = walletRes.rows[0];
 
+    // ── Gem cost check ────────────────────────────────────────────────────────
     if (parseInt(wallet.gems) < cost) {
       await client.query("ROLLBACK");
-      res.status(400).json({ error: `Need ${cost} gems to upgrade` });
+      res.status(400).json({ error: `You need ${cost} gems to enhance this tier.` });
+      return;
+    }
+
+    // ── Loyalty / activity check ──────────────────────────────────────────────
+    // Players must have earned activity points by actively mining to unlock higher
+    // tiers — prevents instant max-tier upgrades with gems alone.
+    const pointsRequired = UPGRADE_POINTS_REQUIRED[level] ?? 0;
+    const playerPoints   = parseFloat(wallet.window_points) || 0;
+    if (playerPoints < pointsRequired) {
+      await client.query("ROLLBACK");
+      res.status(400).json({
+        error: `Keep mining to unlock this tier. Activity progress: ${Math.floor(playerPoints)}/${pointsRequired} pts.`,
+      });
       return;
     }
 

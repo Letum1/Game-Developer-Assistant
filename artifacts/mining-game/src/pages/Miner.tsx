@@ -1,22 +1,33 @@
-import { useEffect, useState, useRef } from "react";
-import { useGetMiner, useMinerTick, useMaintainMiner, useUpgradeMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
+import { useEffect, useState } from "react";
+import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useUpgradeMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer, BatteryCharging, Download } from "lucide-react";
+import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer, BatteryCharging, Download, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
 
 // ── Fuel constants (must stay in sync with server game-constants.ts) ──────────
-// Total fuel capacity shared by all generators/batteries in the rig.
-const MAX_FUEL        = 500;   // max fuel units
-const FUEL_DRAIN_RATE = 0.05;  // units/sec per always-on source (generator or battery)
+const MAX_FUEL        = 500;
+const FUEL_DRAIN_RATE = 0.05;
+
+// ── Loyalty points required per upgrade tier (mirrors server UPGRADE_POINTS_REQUIRED) ──
+// Must stay in sync with game-constants.ts — only used for progress display.
+const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
+  1: 0, 2: 150, 3: 400, 4: 800, 5: 1400, 6: 2200, 7: 3500, 8: 5200,
+};
+
+// ── Gem cost per upgrade tier (mirrors server MINER_UPGRADE_COSTS) ────────────
+const UPGRADE_GEM_COSTS: Record<number, number> = {
+  1: 50, 2: 150, 3: 320, 4: 600, 5: 1000, 6: 1700, 7: 2800, 8: 4500,
+};
 
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
-  const minerTick = useMinerTick();
+  const { data: wallet }         = useGetWallet();
+  const minerTick    = useMinerTick();
   const maintainMiner = useMaintainMiner();
   const upgradeMiner = useUpgradeMiner();
   const requestMonetization = useRequestMonetizationTask();
@@ -169,8 +180,39 @@ export default function Miner() {
     );
   }
 
-  const tempColor = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
+  const tempColor    = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
+
+  // ── Mining speed display (multiplier vs entry tier, no sat/day shown) ────
+  // Shows players the relative rate increase without revealing the platform cap.
+  const BASE_RATE       = 1 / 86400;  // entry-level rate (tier 1)
+  const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 12× at tier 5
+
+  // ── Upgrade state: gem cost + loyalty points required for next tier ───────
+  const nextCost   = UPGRADE_GEM_COSTS[miner.level] ?? null;
+  const nextPoints = UPGRADE_POINTS_REQUIRED[miner.level] ?? null;
+  const playerPoints = parseFloat((wallet as {windowPoints?: string})?.windowPoints ?? "0") || 0;
+  const pointsReady  = nextPoints === null || playerPoints >= nextPoints;
+  const gemsReady    = nextCost === null || (wallet ? parseInt((wallet as {gems?: string})?.gems ?? "0") >= nextCost : false);
+  const canUpgrade   = nextCost !== null && pointsReady;  // at ceiling when nextCost === null
+
+  const handleUpgrade = () => {
+    upgradeMiner.mutate(undefined, {
+      onSuccess: () => {
+        toast({
+          title: "RIG ENHANCED",
+          description: "Mining speed increased. Keep building your empire.",
+          className: "bg-black border-primary text-primary font-mono uppercase",
+        });
+        refetch();
+      },
+      onError: (err: unknown) => {
+        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+          ?? "Upgrade failed. Check your gems and activity.";
+        toast({ title: "UPGRADE BLOCKED", description: msg, variant: "destructive" });
+      },
+    });
+  };
 
   // ── Fuel / battery calculations ──────────────────────────────────────────
   // `generators` column tracks total always-on source blocks (battery + generator).
@@ -250,8 +292,9 @@ export default function Miner() {
             <div className="text-5xl md:text-7xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
               ${localBalance.toFixed(10)}
             </div>
-            <div className="text-muted-foreground text-sm uppercase tracking-widest">
-              Rate: {miner.ratePerSecond} sats/sec
+            <div className="flex items-center gap-2 text-muted-foreground text-sm uppercase tracking-widest">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              Mining Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span>
             </div>
             {/* Collect button — transfers balance to wallet for permanent storage */}
             <Button
@@ -361,13 +404,49 @@ export default function Miner() {
               <span className="text-white font-bold">{miner.generators}</span>
             </div>
             
-            <Button 
-              className="w-full bg-primary/20 text-primary border border-primary hover:bg-primary hover:text-black uppercase tracking-widest font-bold mt-4"
-              onClick={() => upgradeMiner.mutate(undefined, { onSuccess: () => refetch() })}
-              disabled={upgradeMiner.isPending}
-            >
-              <ArrowUpCircle className="w-4 h-4 mr-2" /> Upgrade Rig (Gems)
-            </Button>
+            {canUpgrade ? (
+              <>
+                {/* Loyalty progress bar — shows mining activity requirement */}
+                {nextPoints && nextPoints > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-muted-foreground uppercase tracking-widest">
+                      <span>Activity Required</span>
+                      <span>{Math.min(Math.floor(playerPoints), nextPoints)}/{nextPoints} pts</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-black/60 border border-border rounded overflow-hidden">
+                      <div
+                        className="h-full bg-primary transition-all"
+                        style={{ width: `${Math.min(100, (playerPoints / nextPoints) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <Button
+                  className="w-full bg-primary/20 text-primary border border-primary hover:bg-primary hover:text-black uppercase tracking-widest font-bold mt-2"
+                  onClick={handleUpgrade}
+                  disabled={upgradeMiner.isPending || !pointsReady || !gemsReady}
+                >
+                  <ArrowUpCircle className="w-4 h-4 mr-2" />
+                  {upgradeMiner.isPending ? "ENHANCING..." : `Enhance Rig — ${nextCost} gems`}
+                </Button>
+                {!pointsReady && (
+                  <p className="text-xs text-muted-foreground text-center mt-1 uppercase tracking-widest">
+                    Mine more blocks to unlock this tier
+                  </p>
+                )}
+                {!gemsReady && pointsReady && (
+                  <p className="text-xs text-yellow-500 text-center mt-1 uppercase tracking-widest">
+                    Need {nextCost} gems — you have {(wallet as {gems?: string})?.gems ?? 0}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="mt-4 border border-primary/30 rounded p-3 text-center">
+                <p className="text-primary text-xs uppercase tracking-widest font-bold">
+                  ⚡ Operating at Peak Configuration
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 

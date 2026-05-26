@@ -511,8 +511,10 @@ function drawDataCable(ctx: CanvasRenderingContext2D, bx: number, by: number, ac
 // Draws a chunky energy cell with glowing charge bars.
 // When charged (active = true) the bars pulse green; when empty they're dark.
 // fuelPct (0–1): how full the battery is — shown as a charge bar along the bottom.
+// conns: which sides connect to a data_cable (shows green pipe nubs).
 function drawBatteryBlock(
-  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5,
+  conns: { top: boolean; bottom: boolean; left: boolean; right: boolean } = { top: false, bottom: false, left: false, right: false }
 ) {
   const x = bx * BS;
   const y = by * BS;
@@ -561,19 +563,30 @@ function drawBatteryBlock(
   ctx.fillStyle = chargeColor;
   ctx.fillRect(x + 4, y + BS - 5, Math.round(barW * fuelPct), 3);
 
+  // ── Pipe connection nubs — green protrusions where data cables dock ─────
+  // The battery participates in the same power network as data_cable blocks.
+  // Green nubs on touching sides make the wiring visually explicit.
+  ctx.shadowBlur = 0;
+  const nubColor = active ? "rgba(34,197,94,0.95)" : "rgba(60,100,60,0.55)";
+  ctx.fillStyle  = nubColor;
+  if (conns.top)    ctx.fillRect(x + BS / 2 - 4, y,          8, 5);
+  if (conns.bottom) ctx.fillRect(x + BS / 2 - 4, y + BS - 5, 8, 5);
+  if (conns.left)   ctx.fillRect(x,          y + BS / 2 - 4, 5, 8);
+  if (conns.right)  ctx.fillRect(x + BS - 5, y + BS / 2 - 4, 5, 8);
+
   // Outer border
   ctx.strokeStyle = active ? "rgba(34,197,94,0.5)" : "rgba(100,120,100,0.3)";
   ctx.lineWidth   = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
-  ctx.shadowBlur  = 0;
 }
 
 // ─── Generator Block renderer ─────────────────────────────────────────────────
 // Draws a diesel generator — chunky engine block with exhaust pipe and warning light.
-// Always-on power source that doesn't need sunlight.
-// fuelPct (0–1): remaining diesel — shown as a colored fuel gauge at the bottom.
+// Produces visible animated steam from the exhaust when running and fueled.
+// conns: which sides connect to a data_cable (shows orange pipe nubs).
 function drawGeneratorBlock(
-  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5,
+  conns: { top: boolean; bottom: boolean; left: boolean; right: boolean } = { top: false, bottom: false, left: false, right: false }
 ) {
   const x = bx * BS;
   const y = by * BS;
@@ -590,15 +603,21 @@ function drawGeneratorBlock(
   ctx.fillStyle = "#333";
   ctx.fillRect(x + BS - 13, y + 2, 8, 3);
 
-  // Exhaust smoke when running
-  if (active) {
-    const smokeT = (time / 700) % 1.0;
-    const smokeY = y + 2 - smokeT * 10;
-    const smokeAlpha = (1 - smokeT) * 0.5;
-    ctx.fillStyle = `rgba(180,160,140,${smokeAlpha})`;
-    ctx.beginPath();
-    ctx.arc(x + BS - 9, smokeY, 3 + smokeT * 4, 0, Math.PI * 2);
-    ctx.fill();
+  // ── Steam puffs rising from exhaust when fueled and running ─────────────
+  // 6 staggered puffs, each at a different animation phase, rising ~55px above
+  // the block. They grow and fade as they ascend — visible even in the daytime.
+  if (active && fuelPct > 0) {
+    for (let i = 0; i < 6; i++) {
+      const phase   = ((time / 900) + i / 6) % 1.0;
+      const smokeX  = x + BS - 9 + Math.sin(phase * Math.PI * 4) * 5; // slight sway
+      const smokeY  = y - phase * 55;              // rises 55px above block top
+      const radius  = 3 + phase * 10;              // grows from 3px to 13px
+      const alpha   = (1 - phase) * 0.5;           // fades to transparent
+      ctx.fillStyle = `rgba(200,195,210,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(smokeX, smokeY, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Engine cooling fins — horizontal ridges
@@ -636,6 +655,16 @@ function drawGeneratorBlock(
     ctx.fillStyle = `rgba(239,68,68,${0.5 + 0.5 * Math.sin(time / 200)})`;
     ctx.fillRect(x + BS / 2 - 4, y + BS - 5, 8, 3); // blink red
   }
+
+  // ── Pipe connection nubs — orange protrusions where data cables dock ────
+  // Generator pushes power into the network; nubs show the connection points.
+  ctx.shadowBlur = 0;
+  const nubC = active ? "rgba(245,158,11,0.95)" : "rgba(100,80,40,0.55)";
+  ctx.fillStyle  = nubC;
+  if (conns.top)    ctx.fillRect(x + BS / 2 - 4, y,          8, 5);
+  if (conns.bottom) ctx.fillRect(x + BS / 2 - 4, y + BS - 5, 8, 5);
+  if (conns.left)   ctx.fillRect(x,          y + BS / 2 - 4, 5, 8);
+  if (conns.right)  ctx.fillRect(x + BS - 5, y + BS / 2 - 4, 5, 8);
 
   // Outer border
   ctx.strokeStyle = active ? "rgba(245,158,11,0.45)" : "rgba(120,100,80,0.3)";
@@ -1415,16 +1444,18 @@ export default function Game() {
 
           } else if (blk === "battery_block") {
             // Battery is "active" whenever it is part of any powered network.
-            // Pass fuelPct so the charge bar shows actual fuel level.
+            // Pass fuelPct (charge level) and conns (pipe wiring) for visual feedback.
             const charged  = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             const fuelPct  = Math.max(0, Math.min(1, (minerData?.fuel ?? 100) / 500));
-            drawBatteryBlock(ctx, gx, gy, charged, now, fuelPct);
+            const conns    = getPipeConns(bd, gx, gy);
+            drawBatteryBlock(ctx, gx, gy, charged, now, fuelPct, conns);
 
           } else if (blk === "generator_block") {
-            // Generator shows fuel gauge — active only while fuel > 0
+            // Generator shows fuel gauge + steam + pipe nubs for cable connections.
             const fuelPct  = Math.max(0, Math.min(1, (minerData?.fuel ?? 100) / 500));
             const genActive = (minerData?.fuel ?? 100) > 0;
-            drawGeneratorBlock(ctx, gx, gy, genActive, now, fuelPct);
+            const conns    = getPipeConns(bd, gx, gy);
+            drawGeneratorBlock(ctx, gx, gy, genActive, now, fuelPct, conns);
 
           } else {
             // Standard terrain block: base color + top highlight + border
@@ -1554,17 +1585,18 @@ export default function Game() {
           const cx = gx * BS + BS / 2;   // world-space center of the light
           const cy = gy * BS + BS / 2;
 
-          // Lantern has slightly smaller radius but warmer/stronger core glow
-          const r     = isLantern ? BS * 3.8 : BS * 4.5;
+          // Lantern is brighter and warmer than lamp (open flame vs enclosed bulb).
+          // Larger radius and higher alpha so underground areas are clearly lit.
+          const r     = isLantern ? BS * 5.5 : BS * 4.5;
           const pulse = isLantern
-            ? 0.65 + 0.35 * Math.sin(now / 120 + gx * 1.7)  // flicker more
+            ? 0.70 + 0.30 * Math.sin(now / 120 + gx * 1.7)  // flicker like a flame
             : 0.60 + 0.40 * Math.sin(now / 300);
 
           const innerColor = isLantern
-            ? `rgba(255,160,30,${0.65 * pulse})`    // warm orange for lantern
+            ? `rgba(255,160,30,${0.90 * pulse})`    // strong warm orange for lantern
             : `rgba(255,200,80,${0.55 * pulse})`;   // cooler amber for lamp
           const midColor   = isLantern
-            ? `rgba(255,120,20,${0.30 * pulse})`
+            ? `rgba(255,100,15,${0.50 * pulse})`    // deep orange mid-ring
             : `rgba(255,160,40,${0.25 * pulse})`;
 
           const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);

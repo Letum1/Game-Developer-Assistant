@@ -83,31 +83,47 @@ export const MACHINE_BLOCK_TYPES = new Set([
 // ─── Miner passive income rates (sat/day per level) ──────────────────────────
 // Stored as fractional USD-equivalent per second for precision in the ticker.
 // Level is determined by how many solar panels are connected to machine_core(s).
+// Rates are stored in sats/second for internal calculation precision.
+// IMPORTANT: The platform ceiling is exactly 30 sats/day — NEVER expose this
+// number to the player; show only the current rate tier, not the cap.
 export const MINER_RATES: Record<number, number> = {
-  1:  1  / 86400,   // 1 sat/day  — bare minimum (1 solar panel)
+  1:  1  / 86400,   // tier 1 — entry level
   2:  2  / 86400,
   3:  5  / 86400,
-  4:  10 / 86400,
-  5:  15 / 86400,
-  6:  20 / 86400,
-  7:  25 / 86400,
-  8:  30 / 86400,
-  9:  40 / 86400,
-  10: 50 / 86400,   // 50 sats/day — max level (10+ solar panels)
+  4:  8  / 86400,
+  5:  12 / 86400,
+  6:  17 / 86400,
+  7:  22 / 86400,
+  8:  27 / 86400,
+  9:  30 / 86400,   // tier 9 — platform ceiling (hidden from player)
 };
 
-// ─── Gem cost to upgrade miner via the Miner page ────────────────────────────
-// (Alternative path if user doesn't want to place more solar panels)
+// ─── Gem cost to upgrade the rig via the Miner page ──────────────────────────
+// Costs escalate steeply — upgrades are a significant gem sink.
 export const MINER_UPGRADE_COSTS: Record<number, number> = {
   1:  50,
-  2:  120,
-  3:  280,
-  4:  500,
-  5:  900,
-  6:  1500,
-  7:  2500,
-  8:  4000,
-  9:  6500,
+  2:  150,
+  3:  320,
+  4:  600,
+  5:  1000,
+  6:  1700,
+  7:  2800,
+  8:  4500,
+};
+
+// ─── Loyalty gating: activity (window_points) required per upgrade tier ───────
+// Players earn window_points by actively mining blocks in the game world.
+// Prevents new accounts from buying straight to max tier with gems alone.
+// Values must stay in sync with Miner.tsx frontend display.
+export const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
+  1: 0,      // tier 1→2: no loyalty requirement — just gems
+  2: 150,    // tier 2→3: needs some mining activity
+  3: 400,
+  4: 800,
+  5: 1400,
+  6: 2200,
+  7: 3500,
+  8: 5200,
 };
 
 // ─── Temperature system ───────────────────────────────────────────────────────

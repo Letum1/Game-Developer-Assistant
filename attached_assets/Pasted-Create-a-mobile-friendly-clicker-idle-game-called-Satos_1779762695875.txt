@@ -1,0 +1,29 @@
+Create a mobile-friendly clicker/idle game called "Satoshi Miner" using HTML, CSS, and JavaScript (or Python/Flask if a backend is needed, but a single-page web app is preferred). 
+
+The game revolves around earning Bitcoin (Satoshis) and upgrading a "mining rig," but it uses a clever visual illusion to keep players hooked.
+
+Here are the core mechanics and requirements:
+
+1. THE CURRENCY & ILLUSION:
+- The player's base earnings start at exactly 1.00 Satoshi (sat) per day.
+- To make the game feel alive and "addictive," the UI should display the balance in US Dollars ($), showing 4 to 6 decimal places (e.g., $0.000632). 
+- Create a visual "ticker" or "generator" illusion. Even though the player only earns a set amount per day, the dollar amount on screen should constantly tick upward by tiny, random decimal fractions every second to look like a live-generation rig.
+- Fetch the real-time Bitcoin price using a free public API (like CoinGecko) so the USD conversion stays accurate to the real market.
+
+2. THE UPGRADE SYSTEM:
+- Players can use their accumulated earnings (or a separate in-game point system, you decide what feels best for gameplay) to upgrade their "Mining Speed."
+- Upgrades increase the actual daily payout. 
+- Level 1 = 1.00 sat/day.
+- The maximum upgrade level caps the earnings at exactly 30.00 sats/day.
+- As the daily satoshi rate increases, the fake "real-time ticker" should speed up proportionally to reflect the upgrades.
+
+3. THE DAILY RESET / LOGIC:
+- Behind the scenes, the game should strictly calculate the real earnings based on time elapsed since the last check, ensuring players can't exploit the "random digit" visual illusion. 
+- Save the player's progress (Level, Satoshis, Last Saved Time) in localStorage so they don't lose progress when refreshing.
+
+4. UI/UX DESIGN:
+- Modern, dark-mode "crypto cyberpunk" aesthetic (glowing green/neon accents, clean fonts).
+- A massive, prominent display of their current USD balance.
+- Below the USD balance, show the equivalent Satoshi balance in smaller text.
+- An "Upgrade Rig" button that clearly shows the cost to upgrade and the next Satoshi/day rate.
+- Smooth animations for the ticking numbers.
