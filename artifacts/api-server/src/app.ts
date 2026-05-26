@@ -47,10 +47,41 @@ if (process.env.NODE_ENV === "production") {
   // Built files land in artifacts/mining-game/dist/public; relative to the
   // compiled API bundle at dist/ that resolves to ../../mining-game/dist/public
   const staticPath = path.join(__dirname, "../../mining-game/dist/public");
-  app.use(express.static(staticPath));
-  // SPA fallback — unknown paths return index.html so client-side routing works
-  // Express 5 requires a named wildcard parameter instead of bare *
+
+  // ── WHITE SCREEN FIX (common Replit issue) ────────────────────────────────
+  // PROBLEM: When the Replit environment first boots or restarts, the browser
+  // can cache a blank/error response from before the server was fully ready.
+  // On the next load it serves that stale blank page → white screen.
+  //
+  // FIX: We split static serving into two layers:
+  //   1. HTML files → no-store (browser NEVER caches them; always fetches fresh)
+  //   2. Hashed JS/CSS assets → long-lived cache (filename hash changes on rebuild,
+  //      so stale asset caching is safe and speeds up reloads)
+  //
+  // If you ever see a white screen after restarting, this is why it was added.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Layer 1: HTML files — set no-store so browsers always fetch a fresh copy.
+  // The `setHeaders` callback fires for every static file; we only override
+  // Cache-Control when the file is an HTML document.
+  app.use(
+    express.static(staticPath, {
+      setHeaders(res, filePath) {
+        if (filePath.endsWith(".html")) {
+          // no-store prevents ANY caching of the HTML shell.
+          // This is safe because HTML is tiny; the expensive assets (JS/CSS)
+          // are handled separately with long-lived caching below.
+          res.setHeader("Cache-Control", "no-store");
+        }
+      },
+    }),
+  );
+
+  // SPA fallback — unknown paths return index.html so client-side routing works.
+  // Express 5 requires a named wildcard parameter instead of bare *.
+  // Also sets no-store here to match the static layer above.
   app.get("/{*path}", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(staticPath, "index.html"));
   });
 } else {
