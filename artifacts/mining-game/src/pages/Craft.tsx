@@ -4,12 +4,15 @@
 //
 // Machine building flow:
 //   1. Mine iron/gold/diamond in the world
-//   2. Craft "Machine Core" + "Solar Panel Blocks" here
-//   3. Go to game world, place them adjacent to each other
+//   2. Craft Machine Core + power blocks (Solar Panel, Battery, Generator)
+//   3. Go to game world, place them connected via Data Cables
 //   4. Your Data Rig activates → passive income starts!
 //
-// Each additional Solar Panel placed next to the core boosts
-// the miner level (up to 10×), earning more sats per day.
+// Level formula (must match game.ts scanMachineCluster):
+//   solar_panel_block  = +1 power unit (daytime only)
+//   battery_block      = +1 power unit (always-on, charges from solar)
+//   generator_block    = +2 power units (always-on, needs diesel fuel)
+//   Level = total power units connected to Machine Core, cap = 9
 // ============================================================
 
 import { useCraftItem, useGetInventory } from "@workspace/api-client-react";
@@ -65,27 +68,43 @@ const RECIPES = [
     hint: "Bridges components that aren't directly adjacent",
   },
 
-  // ── Support / maintenance items ─────────────────────────────────────────
+  // ── Battery Block — stores solar energy so the rig runs 24/7 ────────────
+  // +1 power unit, always-on. Charges from solar panels during the day.
+  // Ingredients must match server CRAFTING_RECIPES["battery_block"].
   {
-    recipe: "generator",
-    displayName: "Diesel Generator",
-    description: "Backup power for your Data Center. Reduces fuel drain on the Miner page.",
+    recipe: "battery_block",
+    displayName: "Battery Block",
+    description: "Stores solar energy during the day and keeps the rig running at night. Connect via Data Cables to Machine Core.",
     ingredients: [
       { itemId: "raw_iron", quantity: 3, label: "Raw Iron" },
       { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
     ],
-    emoji: "⚡",
+    key: true,
+    machine: true,
+    emoji: "🔋",
+    hint: "Always-on +1 power — charges from solar during day",
   },
+
+  // ── Generator Block — diesel-powered, day-and-night power source ─────────
+  // +2 power units, always-on. Requires diesel_can items to run.
+  // Ingredients must match server CRAFTING_RECIPES["generator_block"].
   {
-    recipe: "solar_panel",
-    displayName: "Solar Panel (Item)",
-    description: "Inventory item version — install via the Miner page for passive energy boost.",
+    recipe: "generator_block",
+    displayName: "Generator Block",
+    description: "Always-on diesel power — works day AND night. Connect to Machine Core via Data Cables. Buy Diesel Cans from Store to refuel.",
     ingredients: [
-      { itemId: "raw_iron", quantity: 2, label: "Raw Iron" },
-      { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
+      { itemId: "raw_iron",    quantity: 5, label: "Raw Iron"    },
+      { itemId: "raw_gold",    quantity: 2, label: "Raw Gold"    },
+      { itemId: "raw_diamond", quantity: 1, label: "Raw Diamond" },
     ],
-    emoji: "🔆",
+    key: true,
+    machine: true,
+    emoji: "⚡",
+    hint: "Always-on +2 power — tap block in game to refuel with Diesel Can",
   },
+
+  // ── Support / maintenance items ─────────────────────────────────────────
+  // These are use-items (equip from hotbar, apply to rig) not placeable blocks.
   {
     recipe: "water_bucket",
     displayName: "Water Bucket",
@@ -201,8 +220,11 @@ export default function Craft() {
                   <div className="text-[10px]">Put Machine Core in the world, then place Solar Panels touching it to power up!</div>
                 </div>
               </div>
+              {/* Power formula — must match game.ts scanMachineCluster and Miner.tsx MAX_LEVEL */}
               <p className="text-[10px] pt-1 text-primary/70">
-                💡 Each Solar Panel touching the Machine Core boosts miner level (+1 level per panel, max 10). Use Data Cables to bridge gaps between components.
+                💡 <span className="text-yellow-400">Solar Panel = +1 level</span> &nbsp;|&nbsp;
+                <span className="text-blue-400">Battery Block = +1 level</span> &nbsp;|&nbsp;
+                <span className="text-orange-400">Generator Block = +2 levels</span>. Max level: 9. Use Data Cables to bridge gaps.
               </p>
             </div>
           </div>

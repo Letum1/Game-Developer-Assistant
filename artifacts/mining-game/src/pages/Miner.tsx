@@ -240,10 +240,13 @@ export default function Miner() {
           <div>
             <p className="text-yellow-400 font-bold uppercase tracking-widest text-sm">No Power Source Detected</p>
             <p className="text-muted-foreground text-xs mt-1 leading-relaxed">
-              Your rig needs electricity before it can mine. Go to the <span className="text-primary font-bold">Game world</span> and
-              place a <span className="text-yellow-400 font-bold">Solar Panel Block</span> in open sky, then connect it to your{" "}
-              <span className="text-yellow-400 font-bold">Machine Core</span> with <span className="text-yellow-400 font-bold">Data Cables</span>.
-              Alternatively buy a <span className="text-yellow-400 font-bold">Diesel Generator</span> from the Store.
+              {/* Power options — solar (daytime only), battery (24/7 via solar charge), generator (24/7 via diesel) */}
+              Your rig needs power before it can mine. Craft a{" "}
+              <span className="text-yellow-400 font-bold">Solar Panel Block</span> and place it in open sky connected to your{" "}
+              <span className="text-yellow-400 font-bold">Machine Core</span> via{" "}
+              <span className="text-yellow-400 font-bold">Data Cables</span>. For 24/7 power, also craft a{" "}
+              <span className="text-blue-400 font-bold">Battery Block</span> (charges from solar) or a{" "}
+              <span className="text-orange-400 font-bold">Generator Block</span> (diesel, needs Diesel Cans from Store) — all at the Workbench.
             </p>
           </div>
         </div>
