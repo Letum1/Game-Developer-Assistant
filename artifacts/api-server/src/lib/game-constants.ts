@@ -61,7 +61,6 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   lamp_block:          { gems: 0,  points: 0                                          },
   battery_block:       { gems: 0,  points: 0                                          }, // returns itself
   generator_block:     { gems: 0,  points: 0                                          }, // returns itself
-  lantern_block:       { gems: 0,  points: 0                                          }, // returns itself
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
@@ -70,12 +69,12 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
 // lit when connected to an active solar network.
 // battery_block and generator_block are always-on power sources — the rig
 // keeps running at night (battery discharges) or without sun (generator).
+// Note: lantern_block was removed — it was a duplicate of lamp_block.
 export const MACHINE_BLOCK_TYPES = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
   "lamp_block",        // underground lamp — lights up when powered
-  "lantern_block",     // decorative electric lantern — also lights up when powered
   "battery_block",     // energy storage — charges during day, powers rig at night
   "generator_block",   // diesel generator — always-on when fueled
 ]);
@@ -128,7 +127,7 @@ export const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
 
 // ─── Temperature system ───────────────────────────────────────────────────────
 // Miner heats up over time; at 100°C it stops earning until cooled.
-export const TEMP_RISE_PER_HOUR = 4.17; // reaches 100°C in ~24 hours
+export const TEMP_RISE_PER_HOUR = 8.33; // reaches 100°C in ~12 hours without maintenance
 export const MAX_TEMP = 100;
 
 // ─── Diesel fuel system ───────────────────────────────────────────────────────
@@ -146,35 +145,37 @@ export const FUEL_DRAIN_RATE       = 0.05; // units per second per always-on sou
 // With 2 panels: 1.0 unit/sec → fills 500-unit battery in ~8 min of sunshine.
 export const BATTERY_CHARGE_RATE   = 0.5;  // units per second per solar panel (day only)
 
-// ─── Store items (buy with gems or real money) ────────────────────────────────
+// ─── Store items ──────────────────────────────────────────────────────────────
+// Only real, directly usable items are sold here.
+// Blocks (solar_panel_block, generator_block, battery_block, data_cable, machine_core)
+// must be CRAFTED at the Workbench — they are NOT sold in the store.
+// This eliminates the old confusing "solar_panel item" vs "solar_panel_block" distinction.
 export const STORE_ITEMS = [
-  { itemId: "solar_panel",       displayName: "Solar Panel",       gemCost: 100,  realCost: null, category: "energy",     description: "Reduces fuel consumption for your miner." },
-  { itemId: "generator",         displayName: "Diesel Generator",  gemCost: 200,  realCost: null, category: "energy",     description: "Provides backup power for your miner." },
-  { itemId: "thermal_paste",     displayName: "Thermal Paste",     gemCost: 30,   realCost: null, category: "cooling",    description: "Apply to reduce miner temperature." },
-  { itemId: "water_bucket",      displayName: "Water Bucket",      gemCost: 20,   realCost: null, category: "cooling",    description: "Flush cooling water to reset temp gauge." },
-  { itemId: "world_lock",        displayName: "World Lock",        gemCost: 500,  realCost: null, category: "locks",      description: "Lock a world to make it yours." },
-  { itemId: "diamond_lock",      displayName: "Diamond Lock",      gemCost: 2500, realCost: null, category: "locks",      description: "Premium world lock with extra security." },
+  // ── Cooling / maintenance items (use items — equip from hotbar, apply to rig) ──
+  { itemId: "thermal_paste",     displayName: "Thermal Paste",     gemCost: 30,   realCost: null, category: "cooling",    description: "Equip from hotbar, then tap Machine Core to reduce temperature." },
+  { itemId: "water_bucket",      displayName: "Water Bucket",      gemCost: 20,   realCost: null, category: "cooling",    description: "Equip from hotbar, then tap Machine Core to flush cooling." },
+  // ── Fuel (use item — equip, then tap generator or battery block) ─────────────
+  { itemId: "diesel_can",        displayName: "Diesel Can",        gemCost: 20,   realCost: null, category: "fuel",       description: "Equip from hotbar, tap a Generator Block to add +100 fuel." },
+  // ── Pickaxes ─────────────────────────────────────────────────────────────────
   { itemId: "pickaxe_stone",     displayName: "Stone Pickaxe",     gemCost: 80,   realCost: null, category: "tools",      description: "1.8× faster mining than bare hands." },
   { itemId: "pickaxe_iron",      displayName: "Iron Pickaxe",      gemCost: 200,  realCost: null, category: "tools",      description: "2.8× mining speed — breaks iron fast." },
   { itemId: "pickaxe_gold",      displayName: "Gold Pickaxe",      gemCost: 400,  realCost: null, category: "tools",      description: "4.5× mining speed." },
   { itemId: "pickaxe_diamond",   displayName: "Diamond Pickaxe",   gemCost: 800,  realCost: null, category: "tools",      description: "7× mining speed — the ultimate tool." },
-  // Lamp block — buy from store or craft with raw_iron; place underground + wire to solar network
-  { itemId: "lamp_block",        displayName: "Lamp Block",         gemCost: 15,   realCost: null, category: "lighting",   description: "Connect to your solar rig to illuminate underground caverns." },
-  // Lantern block — decorative electric lantern; warmer glow than lamp_block
-  { itemId: "lantern_block",     displayName: "Lantern",            gemCost: 20,   realCost: null, category: "lighting",   description: "Warm orange lantern. Connect to your power rig for a cozy glow." },
-  // Diesel can — refuels generator_block and charges battery_block
-  { itemId: "diesel_can",        displayName: "Diesel Can",         gemCost: 20,   realCost: null, category: "fuel",       description: "Refuels a connected Generator Block. Tap the generator while holding this." },
+  // ── Lighting (placeable block — connect to power rig) ────────────────────────
+  { itemId: "lamp_block",        displayName: "Lamp Block",        gemCost: 15,   realCost: null, category: "lighting",   description: "Place underground and wire to your solar rig to illuminate caverns." },
+  // ── Locks ────────────────────────────────────────────────────────────────────
+  { itemId: "world_lock",        displayName: "World Lock",        gemCost: 500,  realCost: null, category: "locks",      description: "Lock a world to make it yours." },
+  { itemId: "diamond_lock",      displayName: "Diamond Lock",      gemCost: 2500, realCost: null, category: "locks",      description: "Premium world lock with extra security." },
 ];
 
 // ─── Human-readable item names (used in toast messages, inventory UI) ────────
 export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   data_center_rig:   "Data Center Rig",
   machine_core:      "Machine Core",
-  solar_panel_block: "Solar Panel",
+  solar_panel_block: "Solar Panel Block",
   data_cable:        "Data Cable",
   battery_block:     "Battery Block",   // energy storage for nighttime operation
   generator_block:   "Generator Block", // diesel power source (needs fuel)
-  lantern_block:     "Lantern",         // decorative electric lantern
   diesel_can:        "Diesel Can",      // refuels generator_block
   // Pickaxes
   pickaxe_wood:      "Wood Pickaxe",
@@ -196,9 +197,7 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   raw_gold:          "Raw Gold",
   raw_diamond:       "Raw Diamond",
   obsidian:          "Obsidian",
-  // Store items
-  solar_panel:       "Solar Panel (item)",
-  generator:         "Generator",
+  // Store / use items
   thermal_paste:     "Thermal Paste",
   water_bucket:      "Water Bucket",
   world_lock:        "World Lock",
@@ -209,6 +208,8 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
 // ─── Crafting recipes ─────────────────────────────────────────────────────────
 // Players craft these items at the Workbench page using raw resources.
 // `unlocksMiner` = true means placing the result activates passive income.
+// Note: "solar_panel item" and "generator item" have been removed — players
+// now craft and place solar_panel_block / generator_block directly.
 export const CRAFTING_RECIPES: Record<string, {
   displayName: string;
   description: string;
@@ -258,8 +259,8 @@ export const CRAFTING_RECIPES: Record<string, {
   },
 
   data_cable: {
-    displayName: "Data Cable",
-    description: "Extends your machine network — connect Machine Cores to Solar Panels across gaps.",
+    displayName: "Data Cable / Pipe",
+    description: "Extends your machine network — connect Machine Cores to Solar Panels, Generators, and Batteries across gaps.",
     ingredients: [
       { itemId: "raw_iron", quantity: 1 },
     ],
@@ -314,31 +315,9 @@ export const CRAFTING_RECIPES: Record<string, {
   },
 
   // ── Support / maintenance items ─────────────────────────────────────────
-  generator: {
-    displayName: "Diesel Generator",
-    description: "Backup power for your Data Center.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 3 },
-      { itemId: "raw_gold", quantity: 1 },
-    ],
-    result: "generator",
-    resultQty: 1,
-  },
-
-  solar_panel: {
-    displayName: "Solar Panel (item)",
-    description: "Inventory item version — install via the Miner page.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 2 },
-      { itemId: "raw_gold", quantity: 1 },
-    ],
-    result: "solar_panel",
-    resultQty: 1,
-  },
-
   water_bucket: {
     displayName: "Water Bucket",
-    description: "Flush cooling water to reset temperature.",
+    description: "Flush cooling water to reset temperature. Equip from hotbar, then tap Machine Core.",
     ingredients: [
       { itemId: "raw_iron", quantity: 1 },
     ],
@@ -348,7 +327,7 @@ export const CRAFTING_RECIPES: Record<string, {
 
   thermal_paste: {
     displayName: "Thermal Paste",
-    description: "Apply to reduce miner temperature.",
+    description: "Apply to reduce miner temperature. Equip from hotbar, then tap Machine Core.",
     ingredients: [
       { itemId: "raw_gold", quantity: 1 },
     ],
@@ -367,22 +346,10 @@ export const CRAFTING_RECIPES: Record<string, {
     resultQty: 2,
   },
 
-  // ── Lantern Block — electric lantern; warmer orange glow vs lamp_block ──────
-  lantern_block: {
-    displayName: "Lantern",
-    description: "Warm orange electric lantern. Connect to your power rig for a cozy underground glow.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 2 },
-      { itemId: "raw_gold", quantity: 1 },
-    ],
-    result: "lantern_block",
-    resultQty: 1,
-  },
-
   // ── Battery Block — stores solar energy so the rig keeps running at night ──
   battery_block: {
     displayName: "Battery Block",
-    description: "Stores solar energy during the day. Connect to your rig to keep it running at night.",
+    description: "Stores solar energy during the day. Connect via pipes to your rig to keep it running at night.",
     ingredients: [
       { itemId: "raw_iron",    quantity: 3 },
       { itemId: "raw_gold",    quantity: 1 },
@@ -392,9 +359,10 @@ export const CRAFTING_RECIPES: Record<string, {
   },
 
   // ── Generator Block — diesel-powered; always-on alternative to solar ───────
+  // Requires diesel_can items to run. Connect to Machine Core via data_cable pipes.
   generator_block: {
     displayName: "Generator Block",
-    description: "Diesel generator — always-on power source. Connect to your Machine Core to mine 24/7.",
+    description: "Diesel generator — always-on power source. Connect to your Machine Core via pipes. Refuel with Diesel Can.",
     ingredients: [
       { itemId: "raw_iron",    quantity: 5 },
       { itemId: "raw_gold",    quantity: 2 },
@@ -413,7 +381,6 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   data_cable:        "machines",
   battery_block:     "machines",   // energy storage block
   generator_block:   "machines",   // diesel power block
-  lantern_block:     "lighting",   // electric lantern
   diesel_can:        "fuel",       // generator refuel item
   pickaxe_wood:      "tools",
   pickaxe_stone:     "tools",
@@ -431,8 +398,6 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   raw_gold:          "resources",
   raw_diamond:       "resources",
   obsidian:          "resources",
-  solar_panel:       "energy",
-  generator:         "energy",
   thermal_paste:     "cooling",
   water_bucket:      "cooling",
   world_lock:        "locks",

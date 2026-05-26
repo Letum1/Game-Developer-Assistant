@@ -28,7 +28,6 @@ const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
   "lamp_block",
-  "lantern_block",   // decorative electric lantern — returns itself
   "battery_block",   // returns itself so players can rearrange energy storage
   "generator_block", // returns itself so players can rearrange generators
 ]);

@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer } from "lucide-react";
+import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer, Wallet } from "lucide-react";
 import { useGetWallet, getGetWalletQueryKey } from "@workspace/api-client-react";
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -19,6 +19,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     { href: "/game",        icon: Gamepad2, label: "Game"      },
     { href: "/craft",       icon: Hammer,   label: "Craft"     },
     { href: "/miner",       icon: Server,   label: "Miner"     },
+    { href: "/wallet",      icon: Wallet,   label: "Wallet"    },
     { href: "/inventory",   icon: Backpack, label: "Items"     },
     { href: "/store",       icon: Store,    label: "Store"     },
     { href: "/leaderboard", icon: Trophy,   label: "Board"     },

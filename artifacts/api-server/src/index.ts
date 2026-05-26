@@ -2,6 +2,7 @@ import http from "http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { attachChat } from "./lib/chat";
+import { startPassiveTicker } from "./lib/passive-ticker";
 
 const rawPort = process.env["PORT"];
 
@@ -43,4 +44,7 @@ if (process.env.NODE_ENV !== "production") {
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  // Start the passive income ticker — runs every 60s, ticks all active miners
+  // so players earn offline even when they are not in the game.
+  startPassiveTicker();
 });

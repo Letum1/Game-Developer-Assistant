@@ -10,6 +10,7 @@ import Craft from "@/pages/Craft";
 import Inventory from "@/pages/Inventory";
 import Store from "@/pages/Store";
 import Leaderboard from "@/pages/Leaderboard";
+import WalletPage from "@/pages/Wallet";
 import Layout from "@/components/Layout";
 
 const queryClient = new QueryClient({
@@ -42,6 +43,9 @@ function Router() {
       </Route>
       <Route path="/leaderboard">
         <Layout><Leaderboard /></Layout>
+      </Route>
+      <Route path="/wallet">
+        <Layout><WalletPage /></Layout>
       </Route>
       <Route component={NotFound} />
     </Switch>

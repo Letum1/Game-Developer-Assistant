@@ -14,6 +14,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import {
   useGetWorld, useGameAction, useGetWallet, useGetInventory, useGetMiner,
+  useMaintainMiner,
   getGetWorldQueryKey, getGetWalletQueryKey, getGetInventoryQueryKey,
 } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
@@ -23,7 +24,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Zap, TriangleAlert, MessageSquare, SendHorizonal, ZoomIn, ZoomOut } from "lucide-react";
+import { Zap, TriangleAlert, MessageSquare, SendHorizonal, ZoomIn, ZoomOut, Server, Package, ShoppingCart, Trophy } from "lucide-react";
+import StructurePopup    from "@/components/game/StructurePopup";
+import MinerWindow       from "@/components/game/MinerWindow";
+import InventoryWindow   from "@/components/game/InventoryWindow";
+import StoreWindow       from "@/components/game/StoreWindow";
+import LeaderboardWindow from "@/components/game/LeaderboardWindow";
 
 // ─── World / Canvas constants ────────────────────────────────────────────────
 const BS   = 40;    // Block size in world pixels — each grid cell is 40×40
@@ -58,7 +64,6 @@ const BLOCK_HITS: Record<string, number> = {
   solar_panel_block: 1,   // Power source — 1-shot to rearrange
   data_cable:        1,   // Connector — 1-shot to rearrange
   lamp_block:        1,   // Lamp — 1-shot to reposition freely
-  lantern_block:     1,   // Electric lantern — 1-shot to reposition
   battery_block:     1,   // Energy storage — stores solar power for the night
   generator_block:   1,   // Diesel generator — needs fuel to run
 };
@@ -78,7 +83,6 @@ const BLOCK_COLORS: Record<string, string> = {
   lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
   battery_block:     "#0f1a10",   // very dark green — energy cell housing
   generator_block:   "#1a1210",   // very dark brown/gray — diesel engine casing
-  lantern_block:     "#1a1005",   // very dark amber — wrought iron lantern frame
 };
 
 // ─── Top-edge highlight tints (makes blocks look 3D) ────────────────────────
@@ -96,7 +100,6 @@ const BLOCK_TINTS: Record<string, string> = {
   lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
   battery_block:     "rgba(34,220,120,0.25)",  // bright green — energy glow
   generator_block:   "rgba(255,100,30,0.20)",  // warm orange — exhaust heat
-  lantern_block:     "rgba(255,160,30,0.55)",  // warm amber — lantern glass glow
 };
 
 // ─── Hotbar label names ───────────────────────────────────────────────────────
@@ -107,11 +110,13 @@ const BLOCK_LABELS: Record<string, string> = {
   machine_core:      "M.Core",
   solar_panel_block: "SolarPnl",
   data_cable:        "Pipe",
-  water_bucket:      "H₂O",
   lamp_block:        "Lamp",       // underground light source
   battery_block:     "Battery",    // energy storage — keeps rig alive at night
   generator_block:   "Generator",  // diesel power source — needs fuel
-  lantern_block:     "Lantern",    // warm electric lantern
+  // ── Use items (equip from USE hotbar section, tap a structure to apply) ──
+  diesel_can:        "Diesel",     // equip + tap generator or battery to refuel
+  thermal_paste:     "Paste",      // equip + tap machine_core to reduce temperature
+  water_bucket:      "H₂O",        // equip + tap machine_core for cooling flush
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -119,7 +124,8 @@ const BLOCK_LABELS: Record<string, string> = {
 
 // ─── Which inventory items can be placed as world blocks ─────────────────────
 // Includes terrain blocks (collected by mining) AND machine components (crafted).
-// water_bucket is special: it triggers a cooldown splash, not a real block place.
+// Use-items (thermal_paste, water_bucket, diesel_can) are handled separately —
+// they are NOT placed as blocks. Select them from the USE hotbar section instead.
 const PLACEABLE = new Set([
   "block_grass",
   "block_dirt",
@@ -127,9 +133,7 @@ const PLACEABLE = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
-  "water_bucket",
   "lamp_block",      // powered lamp — connect to solar network for light
-  "lantern_block",   // electric lantern — warmer than lamp, same wiring
   "battery_block",   // stores solar energy; keeps the rig running at night
   "generator_block", // diesel generator — needs diesel_can to run
 ]);
@@ -139,15 +143,24 @@ const PLACEABLE = new Set([
 //  • Get the machine "never fully dark" treatment in the shadow overlay
 //  • Participate in BFS power routing
 //  • lamp_block lights up when powered; battery/generator are always-on sources
+//  • Clicking one in punch mode (with no use item) shows the StructurePopup
 const MACHINE_BLOCKS = new Set([
   "machine_core",
   "solar_panel_block",
   "data_cable",
   "lamp_block",
-  "lantern_block",   // electric lantern — uses power from the rig
   "battery_block",   // energy storage — charges by day, powers rig at night
   "generator_block", // diesel generator — needs fuel to provide power
 ]);
+
+// ─── Use-item set (equip from the USE section of the hotbar) ─────────────────
+// These items are NOT placed as world blocks. Selecting one switches the cursor
+// to "apply" mode. Clicking a compatible machine block consumes 1 item and
+// applies the effect:
+//   thermal_paste → machine_core        : resets temperature
+//   water_bucket  → machine_core        : flush-cooling (bigger temp drop)
+//   diesel_can    → generator_block / battery_block : +100 fuel
+const USE_ITEMS = new Set(["thermal_paste", "water_bucket", "diesel_can"]);
 
 // ─── Max punch reach in block-units ─────────────────────────────────────────
 const REACH = 3.5;
@@ -673,70 +686,6 @@ function drawGeneratorBlock(
   ctx.shadowBlur  = 0;
 }
 
-// ─── Lantern Block renderer ───────────────────────────────────────────────────
-// Draws a hanging wrought-iron lantern with warm amber glass.
-// Lit only when connected to an active power source via BFS.
-function drawLanternBlock(
-  ctx: CanvasRenderingContext2D, bx: number, by: number, lit: boolean, time: number
-) {
-  const x = bx * BS;
-  const y = by * BS;
-
-  // Block background — dark stone recess
-  ctx.fillStyle = "#0d0a05";
-  ctx.fillRect(x, y, BS, BS);
-
-  // ── Hanging chain / hook at top ──────────────────────────────────────
-  ctx.fillStyle = "#4b3a28";
-  ctx.fillRect(x + BS / 2 - 1, y + 2, 2, 6);
-
-  // ── Lantern body — tapered iron frame ────────────────────────────────
-  const lx = x + 8, ly = y + 8, lw = BS - 16, lh = BS - 14;
-  ctx.fillStyle = "#2a1e10";
-  ctx.fillRect(lx, ly, lw, lh);
-
-  // Iron corner bars — frame corners
-  ctx.fillStyle = "#5a3e28";
-  ctx.fillRect(lx,          ly,      3, lh); // left
-  ctx.fillRect(lx + lw - 3, ly,      3, lh); // right
-  ctx.fillRect(lx,          ly,      lw, 3); // top
-  ctx.fillRect(lx,          ly+lh-3, lw, 3); // bottom
-
-  // ── Amber glass panels — glow when lit ───────────────────────────────
-  if (lit) {
-    const flicker = 0.75 + 0.25 * Math.sin(time / 120 + bx * 1.7);
-    ctx.fillStyle = `rgba(255,160,30,${0.70 * flicker})`;
-  } else {
-    ctx.fillStyle = "rgba(60,40,10,0.6)";
-  }
-  ctx.fillRect(lx + 3, ly + 3, lw - 6, lh - 6);
-
-  // Diagonal cross bracing on glass (iron decorative bars)
-  ctx.fillStyle = "#5a3e28";
-  ctx.fillRect(lx + lw / 2 - 1, ly + 3,  2, lh - 6); // vertical bar
-  ctx.fillRect(lx + 3,  ly + lh / 2 - 1, lw - 6, 2); // horizontal bar
-
-  // ── Bottom drip cap ────────────────────────────────────────────────
-  ctx.fillStyle = "#5a3e28";
-  ctx.fillRect(x + BS / 2 - 3, y + BS - 4, 6, 4);
-
-  if (lit) {
-    // Inner flame glow — bright warm center
-    const pulse = 0.7 + 0.3 * Math.sin(time / 150);
-    ctx.fillStyle = `rgba(255,220,80,${0.85 * pulse})`;
-    ctx.fillRect(lx + lw / 2 - 3, ly + lh / 2 - 3, 6, 6);
-    ctx.shadowColor = "#ff9800";
-    ctx.shadowBlur  = 10;
-    ctx.fillRect(lx + lw / 2 - 1, ly + lh / 2 - 1, 2, 2);
-  }
-
-  // Outer border
-  ctx.strokeStyle = lit ? "rgba(255,160,30,0.45)" : "rgba(80,60,30,0.25)";
-  ctx.lineWidth   = 1;
-  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
-  ctx.shadowBlur  = 0;
-}
-
 // ─── Client-side machine adjacency check ─────────────────────────────────────
 // Returns true if a machine_core at (gx,gy) has at least one solar_panel_block
 // or data_cable adjacent to it — used for the active glow visual only.
@@ -972,7 +921,10 @@ export default function Game() {
   const { data: inventory = [], refetch: refetchInventory } = useGetInventory({
     query: { enabled: !!userId, queryKey: getGetInventoryQueryKey(), refetchInterval: 5000 },
   });
-  const gameAction = useGameAction();
+  const gameAction    = useGameAction();
+  // maintainMiner: POST /api/miner/maintain — apply thermal_paste or flush_cooling.
+  // Consumes 1 item from inventory and resets (or flushes) the miner temperature.
+  const maintainMiner = useMaintainMiner();
   const { toast } = useToast();
 
   // ── Miner data — used for overheat detection in the world renderer ────────
@@ -1033,6 +985,23 @@ export default function Game() {
   const [wizard,        setWizard]        = useState(false);
   const [wizardAns,     setWizardAns]     = useState("");
   const [chatOpen,      setChatOpen]      = useState(false);
+
+  // ── Use-item selection (hotbar USE section) ───────────────────────────────
+  // When set, clicking a compatible machine block applies the item instead of
+  // mining it. Auto-switches to punch mode (use items are never "placed").
+  const [selectedUseItem, setSelectedUseItem] = useState<string | null>(null);
+
+  // ── Structure popup — shown when tapping a machine block with no use item ─
+  // Shows live block + rig stats. Has a "Break Block" button for disassembly.
+  const [structurePopup,  setStructurePopup]  = useState<{
+    bx: number; by: number; blockType: string;
+  } | null>(null);
+
+  // ── Floating in-game windows (toggled from HUD icon buttons) ─────────────
+  const [showMinerWin, setShowMinerWin] = useState(false);
+  const [showInvWin,   setShowInvWin]   = useState(false);
+  const [showStoreWin, setShowStoreWin] = useState(false);
+  const [showLeadWin,  setShowLeadWin]  = useState(false);
 
   // ── Solar / daytime tracking — updates every 3s to keep badge accurate ──
   // dayFactor matches the canvas renderer's value so badge never lies.
@@ -1437,11 +1406,6 @@ export default function Game() {
             const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawLampBlock(ctx, gx, gy, lit, now);
 
-          } else if (blk === "lantern_block") {
-            // Lantern lights up exactly like lamp_block — connected to power via BFS
-            const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
-            drawLanternBlock(ctx, gx, gy, lit, now);
-
           } else if (blk === "battery_block") {
             // Battery is "active" whenever it is part of any powered network.
             // Pass fuelPct (charge level) and conns (pipe wiring) for visual feedback.
@@ -1783,28 +1747,74 @@ export default function Game() {
       return;
     }
 
-    // ── WATER BUCKET — special: splash on/near machine_core for cooling ──────
-    // Player must physically walk next to the core and "throw" the bucket.
-    if (mode === "place" && selectedBlock === "water_bucket") {
-      // Accept clicks on the core itself OR on any adjacent air tile next to it
-      const isCore = bd[by][bx] === "machine_core";
-      const adjCore = !isCore && [[0,-1],[0,1],[-1,0],[1,0]].some(([dx, dy]) => {
-        const nx = bx + dx, ny2 = by + dy;
-        if (ny2 < 0 || ny2 >= bd.length || nx < 0 || nx >= bd[0].length) return false;
-        return bd[ny2][nx] === "machine_core";
-      });
-      if (!isCore && !adjCore) {
-        toast({ title: "NO CORE NEARBY", description: "Walk next to the Machine Core to cool it.", className: "bg-black border-blue-500 text-blue-400 font-mono text-xs" });
+    // ── USE ITEM HANDLERS ─────────────────────────────────────────────────────
+    // When a use-item is equipped (thermal_paste / water_bucket / diesel_can),
+    // the click applies the item effect and never breaks the block.
+
+    // ── THERMAL PASTE — tap machine_core to lower temperature ─────────────────
+    if (selectedUseItem === "thermal_paste") {
+      if (bd[by][bx] !== "machine_core") {
+        toast({ title: "WRONG TARGET", description: "Tap the Machine Core to apply thermal paste.", className: "bg-black border-orange-500 text-orange-400 font-mono text-xs" });
         return;
       }
-      // Trigger water splash animation at the core block
+      maintainMiner.mutate(
+        { data: { type: "thermal_paste" } },
+        {
+          onSuccess: () => {
+            toast({ title: "🧴 PASTE APPLIED", description: "Temperature reduced — rig cooling down.", className: "bg-black border-primary text-primary font-mono text-xs" });
+            setSelectedUseItem(null);
+            refetchInventory();
+          },
+          onError: (err: unknown) => {
+            const msg = (err as { data?: { message?: string } })?.data?.message ?? "No thermal paste in inventory.";
+            toast({ title: "APPLY FAILED", description: msg, variant: "destructive" });
+          },
+        }
+      );
+      return;
+    }
+
+    // ── DIESEL CAN — tap generator or battery block to refuel ─────────────────
+    if (selectedUseItem === "diesel_can") {
+      const tgt = bd[by][bx];
+      if (tgt !== "generator_block" && tgt !== "battery_block") {
+        toast({ title: "WRONG TARGET", description: "Tap a Generator or Battery Block to refuel.", className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs" });
+        return;
+      }
+      gameAction.mutate(
+        { data: { actionType: "refuel", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
+        {
+          onSuccess: (data) => {
+            if ((data as { success?: boolean }).success) {
+              toast({ title: "⛽ REFUELED", description: "Generator fuel +100.", className: "bg-black border-yellow-400 text-yellow-300 font-mono text-xs" });
+              setSelectedUseItem(null);
+            } else {
+              toast({ title: "REFUEL FAILED", description: (data as { error?: string }).error ?? "No diesel can.", variant: "destructive" });
+            }
+            refetchInventory();
+          },
+        }
+      );
+      return;
+    }
+
+    // ── WATER BUCKET — tap machine_core for a large cooling flush ─────────────
+    if (selectedUseItem === "water_bucket") {
+      if (bd[by][bx] !== "machine_core") {
+        toast({ title: "WRONG TARGET", description: "Tap the Machine Core to cool it with water.", className: "bg-black border-blue-500 text-blue-400 font-mono text-xs" });
+        return;
+      }
       const splashKey = `${bx},${by}`;
       waterSplashRef.current.set(splashKey, 800);
-      toast({ title: "COOLING FLUSH", description: "Water applied — temperature dropping!", className: "bg-black border-blue-400 text-blue-300 font-mono text-xs" });
-      // Fire the miner maintain action (type: water_bucket) via game action
-      gameAction.mutate(
-        { data: { actionType: "maintain", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
-        { onSuccess: () => { refetchInventory(); } }
+      toast({ title: "💧 COOLING FLUSH", description: "Water applied — temperature dropping!", className: "bg-black border-blue-400 text-blue-300 font-mono text-xs" });
+      maintainMiner.mutate(
+        { data: { type: "flush_cooling" } },
+        {
+          onSuccess: () => {
+            setSelectedUseItem(null);
+            refetchInventory();
+          },
+        }
       );
       return;
     }
@@ -1847,42 +1857,13 @@ export default function Game() {
       return;
     }
 
-    // ── REFUEL — punch a generator/battery while holding a diesel_can ─────
-    // This lets players refuel energy blocks without entering a menu.
-    // We check inventory client-side first so we only hit the server when
-    // the player actually has a can; the server re-validates on receipt.
-    if (bd[by][bx] !== "air") {
-      const targetBlk = bd[by][bx];
-      const hasDiesel = inventory.some(i => i.itemId === "diesel_can" && i.quantity > 0);
-      if ((targetBlk === "generator_block" || targetBlk === "battery_block") && hasDiesel) {
-        toast({
-          title: "⛽ REFUELING...",
-          description: "Adding +100 diesel to your rig.",
-          className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs",
-        });
-        gameAction.mutate(
-          { data: { actionType: "refuel", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
-          {
-            onSuccess: (data) => {
-              if ((data as { success?: boolean }).success) {
-                toast({
-                  title: "⛽ REFUELED",
-                  description: "Generator fuel +100. Check Miner panel for level.",
-                  className: "bg-black border-yellow-400 text-yellow-300 font-mono text-xs",
-                });
-              } else {
-                toast({
-                  title: "REFUEL FAILED",
-                  description: (data as { error?: string }).error ?? "No diesel can found.",
-                  variant: "destructive",
-                });
-              }
-              refetchInventory();
-            }
-          }
-        );
-        return;  // skip normal punch logic
-      }
+    // ── MACHINE BLOCK PUNCH → show structure status popup ─────────────────────
+    // Clicking a machine block in punch mode (with no use item selected) shows
+    // the StructurePopup rather than mining it. The popup has a "Break Block"
+    // button for intentional disassembly.
+    if (bd[by][bx] !== "air" && MACHINE_BLOCKS.has(bd[by][bx])) {
+      setStructurePopup({ bx, by, blockType: bd[by][bx] });
+      return;
     }
 
     // ── PUNCH MODE ────────────────────────────────────────────────────────
@@ -1936,7 +1917,7 @@ export default function Game() {
       // Record hit progress (crack animation)
       breakingRef.current.set(key, { hits: newHits, maxHits });
     }
-  }, [mode, selectedBlock, gameAction, refetchWorld, refetchInventory, toast]);
+  }, [mode, selectedBlock, selectedUseItem, setSelectedUseItem, setStructurePopup, maintainMiner, gameAction, refetchWorld, refetchInventory, toast]);
 
   // Clear crack state when world refreshes (blocks reset)
   useEffect(() => { breakingRef.current.clear(); }, [world]);
@@ -2071,6 +2052,28 @@ export default function Game() {
             {expandBusy ? "..." : "⛏+5 cols"}
             <span className="block text-[8px] leading-none mt-0.5 opacity-70">200 💎</span>
           </button>
+
+          {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) */}
+          <button
+            onClick={() => { setShowMinerWin(s => !s); setShowInvWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
+            className={`p-1.5 rounded border transition-colors ${showMinerWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+            title="Toggle Miner window"
+          ><Server className="w-3.5 h-3.5" /></button>
+          <button
+            onClick={() => { setShowInvWin(s => !s); setShowMinerWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
+            className={`p-1.5 rounded border transition-colors ${showInvWin ? "border-white text-white bg-white/10" : "border-border text-muted-foreground hover:text-white"}`}
+            title="Toggle Inventory window"
+          ><Package className="w-3.5 h-3.5" /></button>
+          <button
+            onClick={() => { setShowStoreWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowLeadWin(false); }}
+            className={`p-1.5 rounded border transition-colors ${showStoreWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+            title="Toggle Store window"
+          ><ShoppingCart className="w-3.5 h-3.5" /></button>
+          <button
+            onClick={() => { setShowLeadWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowStoreWin(false); }}
+            className={`p-1.5 rounded border transition-colors ${showLeadWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+            title="Toggle Leaderboard window"
+          ><Trophy className="w-3.5 h-3.5" /></button>
 
           {/* Chat toggle */}
           <button
@@ -2316,14 +2319,128 @@ export default function Game() {
           })
         )}
 
-        {/* Cancel place mode */}
-        {mode === "place" && (
+        {/* ── USE ITEMS section ────────────────────────────────────────────── */}
+        {/* thermal_paste, water_bucket, diesel_can from inventory. */}
+        {/* Equip one → click the target machine block to apply the effect.  */}
+        {(() => {
+          const useItems = inventory.filter(i => USE_ITEMS.has(i.itemId) && i.quantity > 0);
+          if (useItems.length === 0) return null;
+          return (
+            <>
+              <div className="w-px h-8 bg-border shrink-0 mx-1" />
+              <span className="text-muted-foreground text-[10px] uppercase font-mono tracking-wider whitespace-nowrap shrink-0">
+                Use:
+              </span>
+              {useItems.map((item) => {
+                const isSelected = selectedUseItem === item.itemId;
+                const emoji = item.itemId === "thermal_paste" ? "🧴" : item.itemId === "water_bucket" ? "💧" : "⛽";
+                return (
+                  <button
+                    key={item.itemId}
+                    onClick={() => {
+                      // Toggle: clicking again deselects; also exits place mode
+                      if (isSelected) { setSelectedUseItem(null); }
+                      else { setSelectedUseItem(item.itemId); setMode("punch"); setSelectedBlock(null); }
+                    }}
+                    className={`flex flex-col items-center px-2 py-1.5 rounded border text-[10px] font-mono transition-all shrink-0 ${
+                      isSelected
+                        ? "border-orange-400 bg-orange-400/20 text-orange-300 shadow-[0_0_8px_rgba(251,146,60,0.4)]"
+                        : "border-border bg-black/50 text-muted-foreground hover:border-orange-400/50"
+                    }`}
+                    title={`Use: ${BLOCK_LABELS[item.itemId] ?? item.itemId}`}
+                  >
+                    <span className="text-sm leading-none mb-0.5">{emoji}</span>
+                    <span className="uppercase text-[9px]">{BLOCK_LABELS[item.itemId] ?? item.itemId}</span>
+                    <span className="font-bold text-orange-400 text-[9px]">×{item.quantity}</span>
+                  </button>
+                );
+              })}
+            </>
+          );
+        })()}
+
+        {/* Cancel place mode or deselect use item */}
+        {(mode === "place" || selectedUseItem) && (
           <button
-            onClick={() => { setMode("punch"); setSelectedBlock(null); }}
+            onClick={() => { setMode("punch"); setSelectedBlock(null); setSelectedUseItem(null); }}
             className="ml-auto shrink-0 text-[10px] font-mono text-red-400 border border-red-400/40 px-2 py-1 rounded hover:bg-red-400/10"
           >
             ✕ Cancel
           </button>
+        )}
+      </div>
+
+      {/* ── FLOATING WINDOWS + STRUCTURE POPUP ──────────────────────────── */}
+      {/* Uses fixed positioning so the game's overflow-hidden doesn't clip  */}
+      {/* the windows. pointer-events-none on the wrapper, auto on children. */}
+      <div className="fixed inset-0 z-40 pointer-events-none">
+
+        {/* Structure status popup — shown when tapping a machine block */}
+        {structurePopup && (
+          <div className="absolute top-16 right-2 pointer-events-auto">
+            <StructurePopup
+              blockType={structurePopup.blockType}
+              bx={structurePopup.bx}
+              by={structurePopup.by}
+              minerData={minerData as Parameters<typeof StructurePopup>[0]["minerData"]}
+              onClose={() => setStructurePopup(null)}
+              onBreak={() => {
+                // Directly break the block (bypass per-hit counter for machines)
+                const { bx, by } = structurePopup;
+                const bd = worldRef.current;
+                if (!bd) return;
+                breakingRef.current.delete(`${bx},${by}`);
+                const updated = bd.map((row) => [...row]);
+                updated[by][bx] = "air";
+                worldRef.current = updated;
+                gameAction.mutate(
+                  { data: { actionType: "break", worldName: "start", x: bx, y: by } },
+                  {
+                    onSuccess: () => { setStructurePopup(null); refetchWorld(); refetchInventory(); },
+                    onError:   () => { worldRef.current = bd; },
+                  }
+                );
+              }}
+            />
+          </div>
+        )}
+
+        {/* Miner stats window */}
+        {showMinerWin && (
+          <div className="absolute top-16 right-2 pointer-events-auto">
+            <MinerWindow
+              minerData={minerData as Parameters<typeof MinerWindow>[0]["minerData"]}
+              onClose={() => setShowMinerWin(false)}
+            />
+          </div>
+        )}
+
+        {/* Inventory window */}
+        {showInvWin && (
+          <div className="absolute top-16 right-2 pointer-events-auto">
+            <InventoryWindow
+              inventory={inventory}
+              onClose={() => setShowInvWin(false)}
+            />
+          </div>
+        )}
+
+        {/* Store window */}
+        {showStoreWin && (
+          <div className="absolute top-16 right-2 pointer-events-auto">
+            <StoreWindow
+              gems={wallet?.gems ?? 0}
+              onClose={() => setShowStoreWin(false)}
+              onBuy={() => { refetchInventory(); }}
+            />
+          </div>
+        )}
+
+        {/* Leaderboard window */}
+        {showLeadWin && (
+          <div className="absolute top-16 right-2 pointer-events-auto">
+            <LeaderboardWindow onClose={() => setShowLeadWin(false)} />
+          </div>
         )}
       </div>
 
