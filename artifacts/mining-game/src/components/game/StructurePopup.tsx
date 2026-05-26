@@ -196,8 +196,21 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               </button>
             )}
 
+            {/* ── Empty fuel warning ─────────────────────────────────────────── */}
+            {/* Freshly crafted blocks start at 0 fuel — the shared fuel pool is        */}
+            {/* NOT reset when blocks are placed/removed, so re-placing won't give       */}
+            {/* free fuel. Players must use a Diesel Can to refuel.                      */}
+            {fuelPct === 0 && (
+              <div className="mt-1 text-[9px] text-orange-400/90 border border-orange-500/30 rounded px-2 py-1 bg-orange-950/20 leading-relaxed">
+                ⚠ Empty — no power being provided right now.
+                {blockType === "generator_block"
+                  ? " Use a Diesel Can (buy from Store) to add fuel."
+                  : " Charges automatically from Solar Panels during the day."}
+              </div>
+            )}
+
             {/* Battery hint — batteries charge from solar, no diesel needed */}
-            {blockType === "battery_block" && (
+            {blockType === "battery_block" && fuelPct > 0 && (
               <div className="text-[9px] text-muted-foreground leading-relaxed">
                 Charges from solar panels during the day. Use Diesel Can on a Generator to add fuel.
               </div>

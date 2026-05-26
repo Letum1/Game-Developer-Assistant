@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 // number of power-source blocks connected to the Machine Core via Data Pipes.
 // Formula: solar_panel = +1, battery_block = +1, generator_block = +2 (cap 9).
 import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
+// ── Live BTC price for USD conversion —————————————————————————————————————
+// localBalance is stored in satoshis. We multiply by btcPrice/1e8 to get USD.
+// Max rate = 30 sats/day ≈ $0.03/day at $100k BTC — needs 8dp to show movement.
+import { useBtcPrice } from "@/hooks/use-btc-price";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +37,10 @@ export default function Miner() {
   const requestMonetization = useRequestMonetizationTask();
   const verifyMonetization  = useVerifyMonetizationTask();
   const { toast } = useToast();
+
+  // Live BTC/USD price — refreshed every 60s from /api/btc-price (Yahoo Finance proxy).
+  // null while loading or if the fetch fails; balance falls back to raw sat display.
+  const btcPrice = useBtcPrice();
 
   const [localBalance, setLocalBalance] = useState<number>(0);
   const [adTimer, setAdTimer] = useState<number | null>(null);
@@ -103,9 +111,14 @@ export default function Miner() {
       });
       const data = await res.json();
       if (data.success) {
+        // Convert collected satoshis to USD using live price; fallback to sat display if unavailable
+        const collectedSats = data.collected ?? 0;
+        const collectedDisplay = btcPrice != null
+          ? `$${((collectedSats / 100_000_000) * btcPrice).toFixed(8)} USD`
+          : `${collectedSats.toFixed(4)} sat`;
         toast({
           title: "BALANCE COLLECTED",
-          description: `$${data.collected?.toFixed(8) ?? "0"} moved to your wallet.`,
+          description: `${collectedDisplay} moved to your wallet.`,
           className: "bg-black border-primary text-primary font-mono uppercase",
         });
         setLocalBalance(0);  // reset local display
@@ -187,6 +200,19 @@ export default function Miner() {
   // Shows players the relative rate increase without revealing the platform cap.
   const BASE_RATE       = 1 / 86400;  // tier-1 reference rate
   const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 5× at level 5
+
+  // ── USD conversions (satoshis → USD) ──────────────────────────────────────────
+  // localBalance is in satoshis; divide by 1e8 to get BTC, multiply by spot price.
+  // localBalanceUsd: real-time counter shown in the big display card.
+  // dailyUsd: projected daily earnings in USD — shown instead of raw ×speed so
+  //           players see a dollar figure rather than a raw sat/day multiplier.
+  // Both null while btcPrice is loading (price fetches on mount, retries every 60s).
+  const localBalanceUsd: number | null = btcPrice != null
+    ? (localBalance / 100_000_000) * btcPrice
+    : null;
+  const dailyUsd: number | null = btcPrice != null
+    ? (miner.ratePerSecond * 86400 / 100_000_000) * btcPrice
+    : null;
 
   // ── Effective display level — server stores raw power units (can exceed 9) ──
   // but MINER_RATES caps at index 9. Clamp for UI so players see the ceiling.
@@ -275,12 +301,23 @@ export default function Miner() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
-            <div className="text-5xl md:text-7xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
-              ${localBalance.toFixed(10)}
+            {/* ── Live balance counter ─────────────────────────────────────────────── */}
+            {/* localBalanceUsd ticks every 100ms via the local interval (ratePerSecond/10).  */}
+            {/* At 30 sats/day + $100k BTC the counter moves ~$0.00000035 per second —        */}
+            {/* 8 decimal places makes the motion visible even at low earning tiers.           */}
+            {/* Falls back to raw satoshi display while BTC price is loading.                  */}
+            <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
+              {localBalanceUsd != null
+                ? `$${localBalanceUsd.toFixed(8)}`
+                : `${localBalance.toFixed(4)} sat`}
             </div>
+
+            {/* ── Daily yield in USD — replaces raw ×multiplier so players see dollars ── */}
             <div className="flex items-center gap-2 text-muted-foreground text-sm uppercase tracking-widest">
               <TrendingUp className="w-4 h-4 text-primary" />
-              Mining Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span>
+              {dailyUsd != null
+                ? <><span className="text-primary font-bold">+${dailyUsd.toFixed(6)}</span> / day</>
+                : <>Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span></>}
             </div>
             {/* Collect button — transfers balance to wallet for permanent storage */}
             <Button
