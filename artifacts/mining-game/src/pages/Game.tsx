@@ -58,8 +58,9 @@ const BLOCK_HITS: Record<string, number> = {
   solar_panel_block: 1,   // Power source — 1-shot to rearrange
   data_cable:        1,   // Connector — 1-shot to rearrange
   lamp_block:        1,   // Lamp — 1-shot to reposition freely
+  lantern_block:     1,   // Electric lantern — 1-shot to reposition
   battery_block:     1,   // Energy storage — stores solar power for the night
-  generator_block:   1,   // Diesel generator — always-on backup power
+  generator_block:   1,   // Diesel generator — needs fuel to run
 };
 
 // ─── Canvas fill colors per block type ───────────────────────────────────────
@@ -77,6 +78,7 @@ const BLOCK_COLORS: Record<string, string> = {
   lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
   battery_block:     "#0f1a10",   // very dark green — energy cell housing
   generator_block:   "#1a1210",   // very dark brown/gray — diesel engine casing
+  lantern_block:     "#1a1005",   // very dark amber — wrought iron lantern frame
 };
 
 // ─── Top-edge highlight tints (makes blocks look 3D) ────────────────────────
@@ -94,6 +96,7 @@ const BLOCK_TINTS: Record<string, string> = {
   lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
   battery_block:     "rgba(34,220,120,0.25)",  // bright green — energy glow
   generator_block:   "rgba(255,100,30,0.20)",  // warm orange — exhaust heat
+  lantern_block:     "rgba(255,160,30,0.55)",  // warm amber — lantern glass glow
 };
 
 // ─── Hotbar label names ───────────────────────────────────────────────────────
@@ -107,7 +110,8 @@ const BLOCK_LABELS: Record<string, string> = {
   water_bucket:      "H₂O",
   lamp_block:        "Lamp",       // underground light source
   battery_block:     "Battery",    // energy storage — keeps rig alive at night
-  generator_block:   "Generator",  // always-on diesel power source
+  generator_block:   "Generator",  // diesel power source — needs fuel
+  lantern_block:     "Lantern",    // warm electric lantern
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -125,8 +129,9 @@ const PLACEABLE = new Set([
   "data_cable",
   "water_bucket",
   "lamp_block",      // powered lamp — connect to solar network for light
+  "lantern_block",   // electric lantern — warmer than lamp, same wiring
   "battery_block",   // stores solar energy; keeps the rig running at night
-  "generator_block", // diesel generator — always-on; no sun needed
+  "generator_block", // diesel generator — needs diesel_can to run
 ]);
 
 // ─── Machine block types set (for special rendering / detection) ─────────────
@@ -139,8 +144,9 @@ const MACHINE_BLOCKS = new Set([
   "solar_panel_block",
   "data_cable",
   "lamp_block",
+  "lantern_block",   // electric lantern — uses power from the rig
   "battery_block",   // energy storage — charges by day, powers rig at night
-  "generator_block", // diesel generator — provides power regardless of sun
+  "generator_block", // diesel generator — needs fuel to provide power
 ]);
 
 // ─── Max punch reach in block-units ─────────────────────────────────────────
@@ -504,8 +510,9 @@ function drawDataCable(ctx: CanvasRenderingContext2D, bx: number, by: number, ac
 // ─── Battery Block renderer ───────────────────────────────────────────────────
 // Draws a chunky energy cell with glowing charge bars.
 // When charged (active = true) the bars pulse green; when empty they're dark.
+// fuelPct (0–1): how full the battery is — shown as a charge bar along the bottom.
 function drawBatteryBlock(
-  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5
 ) {
   const x = bx * BS;
   const y = by * BS;
@@ -545,6 +552,15 @@ function drawBatteryBlock(
     ctx.shadowBlur  = 8;
   }
 
+  // ── Fuel level bar at the bottom of the block ──────────────────────────
+  // Full width bar background (dark), filled portion shows charge level.
+  const barW = BS - 8;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x + 4, y + BS - 5, barW, 3);
+  const chargeColor = fuelPct > 0.5 ? "#22c55e" : fuelPct > 0.2 ? "#eab308" : "#ef4444";
+  ctx.fillStyle = chargeColor;
+  ctx.fillRect(x + 4, y + BS - 5, Math.round(barW * fuelPct), 3);
+
   // Outer border
   ctx.strokeStyle = active ? "rgba(34,197,94,0.5)" : "rgba(100,120,100,0.3)";
   ctx.lineWidth   = 1;
@@ -555,8 +571,9 @@ function drawBatteryBlock(
 // ─── Generator Block renderer ─────────────────────────────────────────────────
 // Draws a diesel generator — chunky engine block with exhaust pipe and warning light.
 // Always-on power source that doesn't need sunlight.
+// fuelPct (0–1): remaining diesel — shown as a colored fuel gauge at the bottom.
 function drawGeneratorBlock(
-  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number, fuelPct = 0.5
 ) {
   const x = bx * BS;
   const y = by * BS;
@@ -607,8 +624,85 @@ function drawGeneratorBlock(
   ctx.fillRect(x + 6,      y + BS - 6, 8, 4); // positive terminal
   ctx.fillRect(x + BS - 14, y + BS - 6, 8, 4); // negative terminal
 
+  // ── Diesel fuel gauge bar at the bottom ────────────────────────────────
+  const barW = BS - 8;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(x + 4, y + BS - 5, barW, 3);
+  const fuelColor = fuelPct > 0.4 ? "#f59e0b" : fuelPct > 0.15 ? "#f97316" : "#ef4444";
+  ctx.fillStyle = fuelColor;
+  ctx.fillRect(x + 4, y + BS - 5, Math.round(barW * fuelPct), 3);
+  // "DIESEL" label stub — tiny dots at low fuel
+  if (fuelPct < 0.15 && active) {
+    ctx.fillStyle = `rgba(239,68,68,${0.5 + 0.5 * Math.sin(time / 200)})`;
+    ctx.fillRect(x + BS / 2 - 4, y + BS - 5, 8, 3); // blink red
+  }
+
   // Outer border
   ctx.strokeStyle = active ? "rgba(245,158,11,0.45)" : "rgba(120,100,80,0.3)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+  ctx.shadowBlur  = 0;
+}
+
+// ─── Lantern Block renderer ───────────────────────────────────────────────────
+// Draws a hanging wrought-iron lantern with warm amber glass.
+// Lit only when connected to an active power source via BFS.
+function drawLanternBlock(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, lit: boolean, time: number
+) {
+  const x = bx * BS;
+  const y = by * BS;
+
+  // Block background — dark stone recess
+  ctx.fillStyle = "#0d0a05";
+  ctx.fillRect(x, y, BS, BS);
+
+  // ── Hanging chain / hook at top ──────────────────────────────────────
+  ctx.fillStyle = "#4b3a28";
+  ctx.fillRect(x + BS / 2 - 1, y + 2, 2, 6);
+
+  // ── Lantern body — tapered iron frame ────────────────────────────────
+  const lx = x + 8, ly = y + 8, lw = BS - 16, lh = BS - 14;
+  ctx.fillStyle = "#2a1e10";
+  ctx.fillRect(lx, ly, lw, lh);
+
+  // Iron corner bars — frame corners
+  ctx.fillStyle = "#5a3e28";
+  ctx.fillRect(lx,          ly,      3, lh); // left
+  ctx.fillRect(lx + lw - 3, ly,      3, lh); // right
+  ctx.fillRect(lx,          ly,      lw, 3); // top
+  ctx.fillRect(lx,          ly+lh-3, lw, 3); // bottom
+
+  // ── Amber glass panels — glow when lit ───────────────────────────────
+  if (lit) {
+    const flicker = 0.75 + 0.25 * Math.sin(time / 120 + bx * 1.7);
+    ctx.fillStyle = `rgba(255,160,30,${0.70 * flicker})`;
+  } else {
+    ctx.fillStyle = "rgba(60,40,10,0.6)";
+  }
+  ctx.fillRect(lx + 3, ly + 3, lw - 6, lh - 6);
+
+  // Diagonal cross bracing on glass (iron decorative bars)
+  ctx.fillStyle = "#5a3e28";
+  ctx.fillRect(lx + lw / 2 - 1, ly + 3,  2, lh - 6); // vertical bar
+  ctx.fillRect(lx + 3,  ly + lh / 2 - 1, lw - 6, 2); // horizontal bar
+
+  // ── Bottom drip cap ────────────────────────────────────────────────
+  ctx.fillStyle = "#5a3e28";
+  ctx.fillRect(x + BS / 2 - 3, y + BS - 4, 6, 4);
+
+  if (lit) {
+    // Inner flame glow — bright warm center
+    const pulse = 0.7 + 0.3 * Math.sin(time / 150);
+    ctx.fillStyle = `rgba(255,220,80,${0.85 * pulse})`;
+    ctx.fillRect(lx + lw / 2 - 3, ly + lh / 2 - 3, 6, 6);
+    ctx.shadowColor = "#ff9800";
+    ctx.shadowBlur  = 10;
+    ctx.fillRect(lx + lw / 2 - 1, ly + lh / 2 - 1, 2, 2);
+  }
+
+  // Outer border
+  ctx.strokeStyle = lit ? "rgba(255,160,30,0.45)" : "rgba(80,60,30,0.25)";
   ctx.lineWidth   = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
   ctx.shadowBlur  = 0;
@@ -1314,16 +1408,23 @@ export default function Game() {
             const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawLampBlock(ctx, gx, gy, lit, now);
 
+          } else if (blk === "lantern_block") {
+            // Lantern lights up exactly like lamp_block — connected to power via BFS
+            const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawLanternBlock(ctx, gx, gy, lit, now);
+
           } else if (blk === "battery_block") {
-            // Battery is "active" whenever it is part of any powered network
-            // (solar during day, or its own stored charge at night)
-            const charged = isCoreConnectedToPower(bd, gx, gy, dayFactor);
-            drawBatteryBlock(ctx, gx, gy, charged, now);
+            // Battery is "active" whenever it is part of any powered network.
+            // Pass fuelPct so the charge bar shows actual fuel level.
+            const charged  = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            const fuelPct  = Math.max(0, Math.min(1, (minerData?.fuel ?? 100) / 500));
+            drawBatteryBlock(ctx, gx, gy, charged, now, fuelPct);
 
           } else if (blk === "generator_block") {
-            // Generator is always running — it powers the network, not the other
-            // way around, so we just pass active=true at all times
-            drawGeneratorBlock(ctx, gx, gy, true, now);
+            // Generator shows fuel gauge — active only while fuel > 0
+            const fuelPct  = Math.max(0, Math.min(1, (minerData?.fuel ?? 100) / 500));
+            const genActive = (minerData?.fuel ?? 100) > 0;
+            drawGeneratorBlock(ctx, gx, gy, genActive, now, fuelPct);
 
           } else {
             // Standard terrain block: base color + top highlight + border
@@ -1433,29 +1534,42 @@ export default function Game() {
       ctx.fillRect(fr ? px + PW : px - 6,     py + 13, 6, 6);
     }
 
-    // ── LAMP LIGHT HALOS (world space, before restore) ────────────────────
-    // For every powered lamp_block in the grid, draw a warm radial glow using
-    // globalCompositeOperation = "lighter" which ADDS light on top of the
-    // darkness overlays drawn per-block above, effectively illuminating
-    // a radius of ~4 blocks around each active lamp.
+    // ── LAMP & LANTERN LIGHT HALOS (world space, before restore) ─────────
+    // For every powered lamp_block or lantern_block in the grid, draw a warm
+    // radial glow using globalCompositeOperation = "lighter" which ADDS light
+    // on top of the per-block darkness, illuminating a radius around each lamp.
+    // Lanterns use a warmer orange tone vs the lamp's cooler amber.
     if (bd) {
       ctx.save();
       ctx.globalCompositeOperation = "lighter";  // additive blend — brightens pixels below
       for (let gy = 0; gy < bd.length; gy++) {
         for (let gx = 0; gx < bd[gy].length; gx++) {
-          if (bd[gy][gx] !== "lamp_block") continue;
+          const blkH = bd[gy][gx];
+          const isLamp    = blkH === "lamp_block";
+          const isLantern = blkH === "lantern_block";
+          if (!isLamp && !isLantern) continue;
           const lit = isCoreConnectedToPower(bd, gx, gy, dayFactor);
           if (!lit) continue;
 
-          const cx = gx * BS + BS / 2;   // world-space center of the lamp
+          const cx = gx * BS + BS / 2;   // world-space center of the light
           const cy = gy * BS + BS / 2;
-          const r  = BS * 4.5;           // light radius — ~4.5 blocks
-          const pulse = 0.6 + 0.4 * Math.sin(now / 300);
 
-          // Radial gradient from warm amber at center to transparent at edge
+          // Lantern has slightly smaller radius but warmer/stronger core glow
+          const r     = isLantern ? BS * 3.8 : BS * 4.5;
+          const pulse = isLantern
+            ? 0.65 + 0.35 * Math.sin(now / 120 + gx * 1.7)  // flicker more
+            : 0.60 + 0.40 * Math.sin(now / 300);
+
+          const innerColor = isLantern
+            ? `rgba(255,160,30,${0.65 * pulse})`    // warm orange for lantern
+            : `rgba(255,200,80,${0.55 * pulse})`;   // cooler amber for lamp
+          const midColor   = isLantern
+            ? `rgba(255,120,20,${0.30 * pulse})`
+            : `rgba(255,160,40,${0.25 * pulse})`;
+
           const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-          grad.addColorStop(0,   `rgba(255,200,80,${0.55 * pulse})`);
-          grad.addColorStop(0.3, `rgba(255,160,40,${0.25 * pulse})`);
+          grad.addColorStop(0,   innerColor);
+          grad.addColorStop(0.3, midColor);
           grad.addColorStop(1,   "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
           ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
@@ -1699,6 +1813,44 @@ export default function Game() {
         }
       );
       return;
+    }
+
+    // ── REFUEL — punch a generator/battery while holding a diesel_can ─────
+    // This lets players refuel energy blocks without entering a menu.
+    // We check inventory client-side first so we only hit the server when
+    // the player actually has a can; the server re-validates on receipt.
+    if (bd[by][bx] !== "air") {
+      const targetBlk = bd[by][bx];
+      const hasDiesel = inventory.some(i => i.itemId === "diesel_can" && i.quantity > 0);
+      if ((targetBlk === "generator_block" || targetBlk === "battery_block") && hasDiesel) {
+        toast({
+          title: "⛽ REFUELING...",
+          description: "Adding +100 diesel to your rig.",
+          className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs",
+        });
+        gameAction.mutate(
+          { data: { actionType: "refuel", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
+          {
+            onSuccess: (data) => {
+              if ((data as { success?: boolean }).success) {
+                toast({
+                  title: "⛽ REFUELED",
+                  description: "Generator fuel +100. Check Miner panel for level.",
+                  className: "bg-black border-yellow-400 text-yellow-300 font-mono text-xs",
+                });
+              } else {
+                toast({
+                  title: "REFUEL FAILED",
+                  description: (data as { error?: string }).error ?? "No diesel can found.",
+                  variant: "destructive",
+                });
+              }
+              refetchInventory();
+            }
+          }
+        );
+        return;  // skip normal punch logic
+      }
     }
 
     // ── PUNCH MODE ────────────────────────────────────────────────────────

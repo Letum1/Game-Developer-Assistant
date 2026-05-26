@@ -12,6 +12,10 @@ import {
   MINER_UPGRADE_COSTS,
   TEMP_RISE_PER_HOUR,
   MAX_TEMP,
+  MAX_FUEL,
+  FUEL_DRAIN_RATE,
+  BATTERY_CHARGE_RATE,
+  getDayFactor,
 } from "../lib/game-constants";
 
 const router: IRouter = Router();
@@ -77,13 +81,23 @@ router.post("/miner/tick", async (req, res) => {
 
     const level = parseInt(m.level);
     const temp = parseFloat(m.temperature);
-    // A rig needs at least one solar panel OR generator to produce any income.
-    // Without power it sits idle regardless of is_running flag.
-    const hasPower = parseInt(m.solar_panels) > 0 || parseInt(m.generators) > 0;
+    const solarPanels = parseInt(m.solar_panels) || 0;
+    const generators  = parseInt(m.generators)   || 0;
+
+    // Solar panels only generate power during the day (dayFactor > 0.15).
+    // Batteries and generators (stored in the `generators` column) are always-on.
+    // A rig with ONLY solar panels goes offline at night — no stored energy.
+    const dayFactor    = getDayFactor(Date.now());
+    const solarActive  = solarPanels > 0 && dayFactor > 0.15; // sun is up enough
+    const alwaysOn     = generators > 0;                       // battery / generator
+    const hasPower     = solarActive || alwaysOn;
+
     const isRunning = m.is_running && temp < MAX_TEMP && hasPower;
 
     let newBalance = parseFloat(m.current_balance);
-    let newTemp = temp;
+    let newTemp    = temp;
+    const fuel     = parseInt(m.fuel) || 0;
+    let   newFuel  = fuel;
 
     if (isRunning && elapsedSeconds > 0) {
       const rate = minerRate(level);
@@ -92,12 +106,32 @@ router.post("/miner/tick", async (req, res) => {
       newTemp = Math.min(MAX_TEMP, temp + (TEMP_RISE_PER_HOUR / 3600) * elapsedSeconds);
     }
 
-    // Rig shuts down when overheated OR when it has no power source
-    const stillRunning = newTemp < MAX_TEMP && hasPower;
+    // ── Fuel drain: always-on sources (batteries + generators) burn fuel ──
+    // Each source unit drains FUEL_DRAIN_RATE units/sec while the rig has power.
+    if (generators > 0 && elapsedSeconds > 0) {
+      const drained = generators * FUEL_DRAIN_RATE * elapsedSeconds;
+      newFuel = Math.max(0, newFuel - drained);
+    }
+
+    // ── Battery recharge: solar panels top up fuel during daylight ────────
+    // This lets battery blocks charge during the day so they can run at night.
+    if (solarActive && solarPanels > 0 && elapsedSeconds > 0) {
+      const charged = solarPanels * BATTERY_CHARGE_RATE * elapsedSeconds;
+      newFuel = Math.min(MAX_FUEL, newFuel + charged);
+    }
+
+    newFuel = Math.round(newFuel); // store as integer
+
+    // Rig shuts down when overheated OR when it currently has no power.
+    // Re-evaluate hasPower with updated fuel so we catch a just-emptied tank.
+    const nowDayFactor  = getDayFactor(Date.now());
+    const nowSolar      = solarPanels > 0 && nowDayFactor > 0.15;
+    const nowAlwaysOn   = generators > 0 && newFuel > 0;
+    const stillRunning  = newTemp < MAX_TEMP && (nowSolar || nowAlwaysOn);
 
     await client.query(
-      "UPDATE miners SET current_balance = $1, temperature = $2, is_running = $3, last_tick_at = $4 WHERE user_id = $5",
-      [newBalance.toFixed(10), newTemp.toFixed(2), stillRunning, now, userId]
+      "UPDATE miners SET current_balance=$1, temperature=$2, is_running=$3, last_tick_at=$4, fuel=$5 WHERE user_id=$6",
+      [newBalance.toFixed(10), newTemp.toFixed(2), stillRunning, now, newFuel, userId]
     );
 
     await client.query("COMMIT");
@@ -207,6 +241,55 @@ router.post("/miner/maintain", async (req, res) => {
     await client.query("ROLLBACK");
     req.log.error({ err }, "Maintain miner error");
     res.status(500).json({ error: "Maintenance failed" });
+  } finally {
+    client.release();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /miner/collect — transfer accumulated miner balance to wallet.real_balance
+// and reset current_balance to zero. Players "cash out" their passive earnings.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/miner/collect", async (req, res) => {
+  const parsed = GetMinerHeader.safeParse(req.headers);
+  if (!parsed.success) { res.status(401).json({ error: "Missing user id" }); return; }
+  const userId = parseInt(parsed.data["x-user-id"]);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const minerRes = await client.query(
+      "SELECT current_balance FROM miners WHERE user_id=$1 FOR UPDATE", [userId]
+    );
+    if (!minerRes.rows[0]) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "Miner not found" });
+      return;
+    }
+
+    const balance = parseFloat(minerRes.rows[0].current_balance);
+    if (balance <= 0) {
+      await client.query("ROLLBACK");
+      res.json({ success: false, collected: 0, error: "No balance to collect" });
+      return;
+    }
+
+    // Move accumulated sats/USD earnings into the wallet's real_balance column
+    await client.query(
+      "UPDATE wallets SET real_balance = real_balance + $1 WHERE user_id=$2",
+      [balance.toFixed(10), userId]
+    );
+    // Reset miner earnings counter to zero
+    await client.query(
+      "UPDATE miners SET current_balance = 0 WHERE user_id=$1", [userId]
+    );
+
+    await client.query("COMMIT");
+    res.json({ success: true, collected: balance });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    req.log.error({ err }, "Collect miner balance error");
+    res.status(500).json({ error: "Collect failed" });
   } finally {
     client.release();
   }

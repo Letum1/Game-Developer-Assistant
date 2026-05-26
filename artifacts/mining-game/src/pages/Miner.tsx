@@ -6,8 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer } from "lucide-react";
+import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer, BatteryCharging, Download } from "lucide-react";
 import { Link } from "wouter";
+
+// ── Fuel constants (must stay in sync with server game-constants.ts) ──────────
+// Total fuel capacity shared by all generators/batteries in the rig.
+const MAX_FUEL        = 500;   // max fuel units
+const FUEL_DRAIN_RATE = 0.05;  // units/sec per always-on source (generator or battery)
 
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
@@ -21,6 +26,7 @@ export default function Miner() {
   const [localBalance, setLocalBalance] = useState<number>(0);
   const [adTimer, setAdTimer] = useState<number | null>(null);
   const [adToken, setAdToken] = useState<string | null>(null);
+  const [isCollecting, setIsCollecting] = useState(false);
 
   // Sync initial
   useEffect(() => {
@@ -71,6 +77,37 @@ export default function Miner() {
     }
     return undefined;
   }, [adTimer, adToken, verifyMonetization, refetch, toast]);
+
+  // ── Collect accumulated miner balance into wallet.real_balance ────────────
+  // Calls POST /api/miner/collect which moves current_balance → wallets.real_balance
+  // and resets the miner counter. Balance persists in wallet across logins/rig resets.
+  const handleCollect = async () => {
+    const userId = localStorage.getItem("userId");
+    if (!userId || localBalance <= 0) return;
+    setIsCollecting(true);
+    try {
+      const res = await fetch("/api/miner/collect", {
+        method: "POST",
+        headers: { "x-user-id": userId, "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast({
+          title: "BALANCE COLLECTED",
+          description: `$${data.collected?.toFixed(8) ?? "0"} moved to your wallet.`,
+          className: "bg-black border-primary text-primary font-mono uppercase",
+        });
+        setLocalBalance(0);  // reset local display
+        refetch();
+      } else {
+        toast({ title: "NOTHING TO COLLECT", description: data.error ?? "Balance is zero.", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "COLLECT FAILED", description: "Network error.", variant: "destructive" });
+    } finally {
+      setIsCollecting(false);
+    }
+  };
 
   const handleMaintenance = (type: "flush_cooling" | "thermal_paste") => {
     maintainMiner.mutate({ data: { type } }, {
@@ -135,6 +172,27 @@ export default function Miner() {
   const tempColor = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
 
+  // ── Fuel / battery calculations ──────────────────────────────────────────
+  // `generators` column tracks total always-on source blocks (battery + generator).
+  // `fuel` is the shared energy pool (0–MAX_FUEL) for those sources.
+  const generators    = miner.generators ?? 0;
+  const fuel          = miner.fuel ?? 0;
+  const fuelPct       = Math.min(100, Math.round((fuel / MAX_FUEL) * 100));
+  const drainPerSec   = generators * FUEL_DRAIN_RATE;
+  // Time remaining = fuel units ÷ drain rate (seconds); 0 if no always-on source
+  const fuelTimeSec   = drainPerSec > 0 ? fuel / drainPerSec : 0;
+  const hasFuelSource = generators > 0;
+
+  const formatFuelTime = (secs: number) => {
+    if (secs <= 0 || !hasFuelSource) return "—";
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    const s = Math.floor(secs % 60);
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+
   // Rig needs at least one power source (solar panel in world OR generator from store)
   // to generate passive income. Without power it's always offline.
   const hasPower = (miner.solarPanels ?? 0) > 0 || (miner.generators ?? 0) > 0;
@@ -188,13 +246,22 @@ export default function Miner() {
               <Activity className="w-4 h-4 mr-2" /> Live Yield
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center py-8">
+          <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
             <div className="text-5xl md:text-7xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
               ${localBalance.toFixed(10)}
             </div>
-            <div className="mt-4 text-muted-foreground text-sm uppercase tracking-widest">
+            <div className="text-muted-foreground text-sm uppercase tracking-widest">
               Rate: {miner.ratePerSecond} sats/sec
             </div>
+            {/* Collect button — transfers balance to wallet for permanent storage */}
+            <Button
+              className="mt-2 bg-primary/20 text-primary border border-primary hover:bg-primary hover:text-black uppercase tracking-widest font-bold px-8"
+              onClick={handleCollect}
+              disabled={isCollecting || localBalance <= 0}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              {isCollecting ? "COLLECTING..." : "COLLECT BALANCE"}
+            </Button>
           </CardContent>
         </Card>
 
@@ -236,6 +303,43 @@ export default function Miner() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Fuel / Battery Status Card (only shown when always-on blocks exist) */}
+      {hasFuelSource && (
+        <Card className={`border ${fuel === 0 ? "border-destructive/70 animate-pulse" : fuel < MAX_FUEL * 0.2 ? "border-orange-500/60" : "border-yellow-500/30"} bg-black/60`}>
+          <CardHeader>
+            <CardTitle className="text-muted-foreground uppercase text-xs tracking-widest flex items-center">
+              <BatteryCharging className="w-4 h-4 mr-2" /> Fuel / Battery Charge
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <span className={`text-4xl font-black tabular-nums ${fuel === 0 ? "text-destructive" : fuel < MAX_FUEL * 0.2 ? "text-orange-400" : "text-yellow-400"}`}>
+                {fuelPct}%
+              </span>
+              <span className="text-muted-foreground text-xs uppercase tracking-widest text-right">
+                {fuel} / {MAX_FUEL} units<br />
+                {hasFuelSource && fuel > 0 ? `~${formatFuelTime(fuelTimeSec)} remaining` : fuel === 0 ? "EMPTY — refuel generator" : ""}
+              </span>
+            </div>
+            {/* Fuel bar — color shifts red when low */}
+            <div className="w-full h-3 rounded bg-black/60 border border-border overflow-hidden">
+              <div
+                className="h-full transition-all duration-1000"
+                style={{
+                  width: `${fuelPct}%`,
+                  backgroundColor: fuel === 0 ? "#ef4444" : fuel < MAX_FUEL * 0.2 ? "#f97316" : "#eab308",
+                }}
+              />
+            </div>
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              {fuel === 0
+                ? "⚠ Generator is out of fuel — rig running on solar only."
+                : "Tap a Generator or Battery block in the game world while holding a Diesel Can to refuel."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Stats & Upgrade */}

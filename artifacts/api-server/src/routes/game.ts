@@ -15,7 +15,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "../lib/db-pool";
 import { GameActionBody, GameActionHeader } from "@workspace/api-zod";
-import { BLOCK_REWARDS, MACHINE_BLOCK_TYPES, MINER_RATES } from "../lib/game-constants";
+import { BLOCK_REWARDS, MACHINE_BLOCK_TYPES, MINER_RATES, DIESEL_PER_CAN, MAX_FUEL } from "../lib/game-constants";
 
 const router: IRouter = Router();
 
@@ -28,6 +28,7 @@ const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
   "lamp_block",
+  "lantern_block",   // decorative electric lantern — returns itself
   "battery_block",   // returns itself so players can rearrange energy storage
   "generator_block", // returns itself so players can rearrange generators
 ]);
@@ -39,25 +40,27 @@ const OAK_BLOCKS = new Set(["block_oak_log", "block_oak_sapling"]);
 // BFS: find the Data Rig cluster connected to (startX, startY).
 // Returns { coreCount, solarCount } for that cluster.
 // ============================================================
+// Returns counts split by power source type:
+//   solarCount    — pure solar_panel_block blocks (only active during daytime)
+//   generatorCount — battery_block + generator_block (always-on, day or night)
+// This split is stored in the DB so the miner tick can apply day/night correctly.
 function scanMachineCluster(
   grid: string[][], startX: number, startY: number
-): { coreCount: number; solarCount: number } {
+): { coreCount: number; solarCount: number; generatorCount: number } {
   const rows = grid.length, cols = grid[0]?.length ?? 0;
   const visited = new Set<string>();
   const queue: [number, number][] = [[startX, startY]];
   visited.add(`${startX},${startY}`);
-  let coreCount = 0, solarCount = 0;
+  let coreCount = 0, solarCount = 0, generatorCount = 0;
   const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
   while (queue.length > 0) {
     const [cx, cy] = queue.shift()!;
     const blk = grid[cy]?.[cx];
     if (!blk || !MACHINE_BLOCK_TYPES.has(blk)) continue;
     if (blk === "machine_core")      coreCount++;
-    // All three block types count as "power sources" for the cluster.
-    // battery_block and generator_block always contribute regardless of time of day.
-    if (blk === "solar_panel_block") solarCount++;
-    if (blk === "battery_block")     solarCount++; // counts as 1 solar equivalent
-    if (blk === "generator_block")   solarCount += 2; // generator = 2 panels worth
+    if (blk === "solar_panel_block") solarCount++;         // daytime only
+    if (blk === "battery_block")     generatorCount++;     // always-on (stores solar charge)
+    if (blk === "generator_block")   generatorCount += 2;  // always-on, counts double
     for (const [dx, dy] of dirs) {
       const nx = cx+dx, ny = cy+dy, key = `${nx},${ny}`;
       if (nx<0||ny<0||nx>=cols||ny>=rows||visited.has(key)) continue;
@@ -65,7 +68,7 @@ function scanMachineCluster(
       visited.add(key); queue.push([nx,ny]);
     }
   }
-  return { coreCount, solarCount };
+  return { coreCount, solarCount, generatorCount };
 }
 
 // ============================================================
@@ -78,16 +81,17 @@ async function updateMinerFromWorld(
 ) {
   const rows = grid.length, cols = grid[0]?.length ?? 0;
   const scanned = new Set<string>();
-  let bestCores = 0, bestSolars = 0;
+  let bestCores = 0, bestSolars = 0, bestGenerators = 0;
   const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const blk = grid[y][x], key = `${x},${y}`;
       if (!MACHINE_BLOCK_TYPES.has(blk) || scanned.has(key)) continue;
-      const { coreCount, solarCount } = scanMachineCluster(grid, x, y);
-      if (coreCount > 0 && solarCount > bestSolars) {
-        bestCores = coreCount; bestSolars = solarCount;
+      const { coreCount, solarCount, generatorCount } = scanMachineCluster(grid, x, y);
+      // Pick the cluster with the most total power sources
+      if (coreCount > 0 && (solarCount + generatorCount) > (bestSolars + bestGenerators)) {
+        bestCores = coreCount; bestSolars = solarCount; bestGenerators = generatorCount;
       }
       // Mark all cells in this cluster as visited
       const mark: [number, number][] = [[x, y]]; scanned.add(key);
@@ -103,19 +107,22 @@ async function updateMinerFromWorld(
     }
   }
 
-  if (bestCores > 0 && bestSolars > 0) {
-    // Machine core + solar panel connected — unlock and start the miner.
-    // Level is capped at 10 (max MINER_RATES key); `level` column drives
-    // ratePerSecond at read-time via formatMiner(), so we don't store a
-    // separate rate column (it doesn't exist on the schema).
-    const level = Math.min(10, bestSolars);
+  if (bestCores > 0 && (bestSolars + bestGenerators) > 0) {
+    // Machine core has at least one power source connected — unlock and start.
+    // solar_panels = daytime-only count, generators = always-on count.
+    // Level is driven by total power sources, capped at 10.
+    const totalPower = bestSolars + bestGenerators;
+    const level = Math.min(10, totalPower);
     await client.query(
-      `UPDATE miners SET unlocked=true, is_running=true, solar_panels=$1, level=$2 WHERE user_id=$3`,
-      [bestSolars, level, userId]
+      `UPDATE miners SET unlocked=true, is_running=true, solar_panels=$1, generators=$2, level=$3 WHERE user_id=$4`,
+      [bestSolars, bestGenerators, level, userId]
     );
   } else if (bestCores === 0) {
-    // No machine core in the world — rig is offline.
-    await client.query("UPDATE miners SET is_running=false WHERE user_id=$1", [userId]);
+    // No machine core in the world — rig is fully offline.
+    await client.query(
+      "UPDATE miners SET is_running=false, solar_panels=0, generators=0 WHERE user_id=$1",
+      [userId]
+    );
   } else {
     // Machine core exists but no solar panel connected — rig has no power.
     await client.query("UPDATE miners SET is_running=false, solar_panels=0 WHERE user_id=$1", [userId]);
@@ -333,6 +340,52 @@ router.post("/game/action", async (req, res) => {
       await client.query("UPDATE worlds SET block_data=$1 WHERE name=$2", [JSON.stringify(grid), worldName]);
       await client.query("COMMIT");
       res.json({ success:true, gemsGained:0, pointsAwarded:0, dropItem:null, currentActions, wizardChallenge:false });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // REFUEL — consume 1 diesel_can from inventory, add fuel to miner.
+    // Player must click on a generator_block or battery_block in the world.
+    // ══════════════════════════════════════════════════════════════════════
+    } else if (actionType === "refuel") {
+      // Verify player has at least 1 diesel_can
+      const canRes = await client.query(
+        "SELECT quantity FROM inventories WHERE user_id=$1 AND item_id='diesel_can' FOR UPDATE",
+        [userId]
+      );
+      if (!canRes.rows[0] || parseInt(canRes.rows[0].quantity) < 1) {
+        await client.query("ROLLBACK");
+        res.json({ success: false, error: "No diesel can in inventory" });
+        return;
+      }
+
+      // Verify the target block is a generator or battery
+      const worldRes = await client.query("SELECT block_data FROM worlds WHERE name=$1", [worldName]);
+      if (!worldRes.rows[0]) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "World not found" });
+        return;
+      }
+      const grid: string[][] = worldRes.rows[0].block_data;
+      const targetBlock = grid[y]?.[x];
+      if (targetBlock !== "generator_block" && targetBlock !== "battery_block") {
+        await client.query("ROLLBACK");
+        res.json({ success: false, error: "No generator or battery at that position" });
+        return;
+      }
+
+      // Consume one diesel_can from inventory
+      await client.query(
+        "UPDATE inventories SET quantity=quantity-1 WHERE user_id=$1 AND item_id='diesel_can'",
+        [userId]
+      );
+
+      // Add DIESEL_PER_CAN fuel to miner, capped at MAX_FUEL
+      await client.query(
+        "UPDATE miners SET fuel = LEAST(fuel + $1, $2) WHERE user_id=$3",
+        [DIESEL_PER_CAN, MAX_FUEL, userId]
+      );
+
+      await client.query("COMMIT");
+      res.json({ success: true, gemsGained: null, pointsAwarded: null, dropItem: null, currentActions, wizardChallenge: false });
 
     } else {
       await client.query("ROLLBACK");

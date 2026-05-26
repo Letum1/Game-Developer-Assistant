@@ -18,6 +18,28 @@ export const PICKAXE_POWER: Record<string, number> = {
   pickaxe_diamond: 7.0,
 };
 
+// ─── Day/night cycle length (milliseconds) ───────────────────────────────────
+// Must match the DAY_MS constant in Game.tsx. Wall-clock time is used so all
+// players and the server share exactly the same sky cycle.
+// t = (Date.now() % DAY_MS) / DAY_MS
+// Full day:  t ∈ [0.30, 0.68]   dayFactor = 1.0
+// Dawn:      t ∈ [0.22, 0.30]   dayFactor ramps 0→1
+// Dusk:      t ∈ [0.68, 0.78]   dayFactor ramps 1→0
+// Night:     t ∈ [0.78, 1.0] ∪ [0.0, 0.22]   dayFactor = 0
+// Solar panels require dayFactor > 0.15 to produce power.
+export const DAY_MS = 900_000; // 15-minute full cycle
+
+// Computes the solar dayFactor [0, 1] from a unix-ms timestamp.
+// Mirrors the getSky() logic in Game.tsx.
+export function getDayFactor(nowMs: number): number {
+  const t = (nowMs % DAY_MS) / DAY_MS;
+  if (t < 0.22) return 0;
+  if (t < 0.30) return (t - 0.22) / 0.08;
+  if (t < 0.68) return 1;
+  if (t < 0.78) return 1 - (t - 0.68) / 0.10;
+  return 0;
+}
+
 // ─── Block break rewards ─────────────────────────────────────────────────────
 // When a player breaks a block, they earn `gems` currency and `points` (for
 // the 3-hour leaderboard revenue pool). `drop` + `dropChance` control resource drops.
@@ -39,6 +61,7 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   lamp_block:          { gems: 0,  points: 0                                          },
   battery_block:       { gems: 0,  points: 0                                          }, // returns itself
   generator_block:     { gems: 0,  points: 0                                          }, // returns itself
+  lantern_block:       { gems: 0,  points: 0                                          }, // returns itself
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
@@ -52,8 +75,9 @@ export const MACHINE_BLOCK_TYPES = new Set([
   "solar_panel_block",
   "data_cable",
   "lamp_block",        // underground lamp — lights up when powered
+  "lantern_block",     // decorative electric lantern — also lights up when powered
   "battery_block",     // energy storage — charges during day, powers rig at night
-  "generator_block",   // diesel generator — always-on regardless of sunlight
+  "generator_block",   // diesel generator — always-on when fueled
 ]);
 
 // ─── Miner passive income rates (sat/day per level) ──────────────────────────
@@ -91,6 +115,21 @@ export const MINER_UPGRADE_COSTS: Record<number, number> = {
 export const TEMP_RISE_PER_HOUR = 4.17; // reaches 100°C in ~24 hours
 export const MAX_TEMP = 100;
 
+// ─── Diesel fuel system ───────────────────────────────────────────────────────
+// Generators and batteries share the `fuel` column in the miners table.
+// Generators consume fuel while running; batteries drain at night and recharge
+// via solar panels during the day.
+// fuel range: 0 – MAX_FUEL (integer units)
+export const MAX_FUEL              = 500;   // max stored fuel / charge
+export const DIESEL_PER_CAN        = 100;   // fuel units added per diesel_can item
+// Drain: each always-on "source unit" burns this many fuel units per second.
+// 1 battery_block = 1 source unit; 1 generator_block = 2 source units.
+// With 1 generator (2 units): 100 fuel lasts ~1000s ≈ 3 nights of runtime.
+export const FUEL_DRAIN_RATE       = 0.05; // units per second per always-on source
+// Recharge: solar panels replenish battery fuel during daylight hours.
+// With 2 panels: 1.0 unit/sec → fills 500-unit battery in ~8 min of sunshine.
+export const BATTERY_CHARGE_RATE   = 0.5;  // units per second per solar panel (day only)
+
 // ─── Store items (buy with gems or real money) ────────────────────────────────
 export const STORE_ITEMS = [
   { itemId: "solar_panel",       displayName: "Solar Panel",       gemCost: 100,  realCost: null, category: "energy",     description: "Reduces fuel consumption for your miner." },
@@ -105,6 +144,10 @@ export const STORE_ITEMS = [
   { itemId: "pickaxe_diamond",   displayName: "Diamond Pickaxe",   gemCost: 800,  realCost: null, category: "tools",      description: "7× mining speed — the ultimate tool." },
   // Lamp block — buy from store or craft with raw_iron; place underground + wire to solar network
   { itemId: "lamp_block",        displayName: "Lamp Block",         gemCost: 15,   realCost: null, category: "lighting",   description: "Connect to your solar rig to illuminate underground caverns." },
+  // Lantern block — decorative electric lantern; warmer glow than lamp_block
+  { itemId: "lantern_block",     displayName: "Lantern",            gemCost: 20,   realCost: null, category: "lighting",   description: "Warm orange lantern. Connect to your power rig for a cozy glow." },
+  // Diesel can — refuels generator_block and charges battery_block
+  { itemId: "diesel_can",        displayName: "Diesel Can",         gemCost: 20,   realCost: null, category: "fuel",       description: "Refuels a connected Generator Block. Tap the generator while holding this." },
 ];
 
 // ─── Human-readable item names (used in toast messages, inventory UI) ────────
@@ -114,7 +157,9 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   solar_panel_block: "Solar Panel",
   data_cable:        "Data Cable",
   battery_block:     "Battery Block",   // energy storage for nighttime operation
-  generator_block:   "Generator Block", // always-on diesel power source
+  generator_block:   "Generator Block", // diesel power source (needs fuel)
+  lantern_block:     "Lantern",         // decorative electric lantern
+  diesel_can:        "Diesel Can",      // refuels generator_block
   // Pickaxes
   pickaxe_wood:      "Wood Pickaxe",
   pickaxe_stone:     "Stone Pickaxe",
@@ -306,6 +351,18 @@ export const CRAFTING_RECIPES: Record<string, {
     resultQty: 2,
   },
 
+  // ── Lantern Block — electric lantern; warmer orange glow vs lamp_block ──────
+  lantern_block: {
+    displayName: "Lantern",
+    description: "Warm orange electric lantern. Connect to your power rig for a cozy underground glow.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 2 },
+      { itemId: "raw_gold", quantity: 1 },
+    ],
+    result: "lantern_block",
+    resultQty: 1,
+  },
+
   // ── Battery Block — stores solar energy so the rig keeps running at night ──
   battery_block: {
     displayName: "Battery Block",
@@ -339,7 +396,9 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   solar_panel_block: "machines",
   data_cable:        "machines",
   battery_block:     "machines",   // energy storage block
-  generator_block:   "machines",   // always-on power block
+  generator_block:   "machines",   // diesel power block
+  lantern_block:     "lighting",   // electric lantern
+  diesel_can:        "fuel",       // generator refuel item
   pickaxe_wood:      "tools",
   pickaxe_stone:     "tools",
   pickaxe_iron:      "tools",
