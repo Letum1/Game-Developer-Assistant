@@ -61,6 +61,8 @@ const BLOCK_HITS: Record<string, number> = {
   block_diamond:     5,   // Diamond — hardest ore
   block_lava:        4,   // Lava — dangerous, hard
   machine_core:      1,   // Machine component — 1-shot so you can rearrange
+  mining_rig:        1,   // ASIC hardware — 1-shot so rig arrays are rearrangeable
+  fan_block:         1,   // Cooling fan — 1-shot to reposition
   solar_panel_block: 1,   // Power source — 1-shot to rearrange
   data_cable:        1,   // Connector — 1-shot to rearrange
   lamp_block:        1,   // Lamp — 1-shot to reposition freely
@@ -78,6 +80,8 @@ const BLOCK_COLORS: Record<string, string> = {
   block_diamond:     "#0e7490",
   block_lava:        "#b91c1c",
   machine_core:      "#0a1628",   // dark navy — circuit board feel
+  mining_rig:        "#111822",   // very dark blue-gray — ASIC server chassis
+  fan_block:         "#101820",   // very dark teal-black — fan housing
   solar_panel_block: "#0d2b2b",   // dark teal — solar panel base
   data_cable:        "#1a1a2e",   // very dark — cable conduit
   lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
@@ -95,6 +99,8 @@ const BLOCK_TINTS: Record<string, string> = {
   block_diamond:     "rgba(100,240,255,0.30)",
   block_lava:        "rgba(255,120,0,0.40)",
   machine_core:      "rgba(34,197,94,0.15)",   // faint green circuit glow
+  mining_rig:        "rgba(34,197,94,0.20)",   // green LED array — active compute
+  fan_block:         "rgba(0,180,255,0.25)",   // cyan — spinning blades
   solar_panel_block: "rgba(255,220,50,0.20)",  // gold tint — solar cells
   data_cable:        "rgba(34,197,94,0.10)",   // faint green data line
   lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
@@ -108,6 +114,8 @@ const BLOCK_LABELS: Record<string, string> = {
   block_dirt:        "Dirt",
   block_rock:        "Rock",
   machine_core:      "M.Core",
+  mining_rig:        "Rig",        // ASIC mining hardware — each block = 1 TH
+  fan_block:         "Fan",        // cooling fan — cuts temperature rise
   solar_panel_block: "SolarPnl",
   data_cable:        "Pipe",
   lamp_block:        "Lamp",       // underground light source
@@ -131,6 +139,8 @@ const PLACEABLE = new Set([
   "block_dirt",
   "block_rock",
   "machine_core",
+  "mining_rig",      // ASIC hardware — each block placed = 1 TH of compute
+  "fan_block",       // cooling fan — place in cluster to reduce temp rise
   "solar_panel_block",
   "data_cable",
   "lamp_block",      // powered lamp — connect to solar network for light
@@ -146,6 +156,8 @@ const PLACEABLE = new Set([
 //  • Clicking one in punch mode (with no use item) shows the StructurePopup
 const MACHINE_BLOCKS = new Set([
   "machine_core",
+  "mining_rig",      // ASIC compute block — counted by scanMachineCluster
+  "fan_block",       // cooling fan — counted by scanMachineCluster
   "solar_panel_block",
   "data_cable",
   "lamp_block",
@@ -698,6 +710,109 @@ function drawGeneratorBlock(
   ctx.lineWidth   = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
   ctx.shadowBlur  = 0;
+}
+
+// ─── Mining Rig Block renderer ────────────────────────────────────────────────
+// Draws an ASIC server rack — rows of chip slots, blinking status LEDs, and a
+// green power indicator when connected to the cluster and powered. Each mining_rig
+// block placed in the world = +1 TH of compute (tracked by scanMachineCluster).
+function drawMiningRig(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+) {
+  const x = bx * BS, y = by * BS;
+
+  // Chassis background — dark server blue-black
+  ctx.fillStyle = "#111822";
+  ctx.fillRect(x, y, BS, BS);
+
+  // Rack face — slightly lighter panel
+  ctx.fillStyle = "#192234";
+  ctx.fillRect(x + 2, y + 2, BS - 4, BS - 4);
+
+  // ── ASIC chip rows — 3 rows of 4 chips each ──────────────────────────────
+  const chipW = 7, chipH = 5;
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 4; col++) {
+      const cx = x + 4 + col * (chipW + 2);
+      const cy = y + 5 + row * (chipH + 4);
+      // Active chips glow green; inactive are dark gray
+      ctx.fillStyle = active
+        ? `rgba(34,197,94,${0.55 + 0.35 * Math.sin(time / 600 + row + col * 0.7)})`
+        : "#1e2a1e";
+      ctx.fillRect(cx, cy, chipW, chipH);
+    }
+  }
+
+  // ── Status LED row at the bottom ─────────────────────────────────────────
+  for (let i = 0; i < 4; i++) {
+    const phase  = (time / 350 + i * 0.5) % (Math.PI * 2);
+    const bright = active ? (Math.sin(phase) > 0.4 ? 1 : 0.25) : 0.12;
+    ctx.fillStyle = active ? `rgba(34,197,94,${bright})` : "rgba(60,80,60,0.4)";
+    ctx.fillRect(x + 5 + i * 8, y + BS - 6, 4, 3);
+  }
+
+  // Outer border — green when active
+  ctx.strokeStyle = active ? "rgba(34,197,94,0.55)" : "rgba(80,100,80,0.25)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+}
+
+// ─── Fan Block renderer ───────────────────────────────────────────────────────
+// Draws an industrial cooling fan — rotating blade circle with cyan glow when
+// connected to the cluster. Each fan_block reduces hourly temperature rise by
+// FAN_COOLING_PER_HOUR. 4 fans = zero net temperature rise at base load.
+function drawFanBlock(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, active: boolean, time: number
+) {
+  const x = bx * BS, y = by * BS;
+  const cx = x + BS / 2, cy = y + BS / 2;
+  const r  = BS * 0.38;  // blade circle radius
+
+  // Fan housing — dark teal-black panel
+  ctx.fillStyle = "#101820";
+  ctx.fillRect(x, y, BS, BS);
+  ctx.fillStyle = "#152028";
+  ctx.fillRect(x + 2, y + 2, BS - 4, BS - 4);
+
+  // ── Rotating fan blades (4 blades, time-animated) ────────────────────────
+  // Speed is 1.5 rpm equivalent when active, slow drift when idle.
+  const speed   = active ? 1.8 : 0.18;
+  const angle   = (time / 1000) * speed * Math.PI * 2;
+  const bladeColor = active ? "rgba(0,200,255,0.75)" : "rgba(40,80,100,0.55)";
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+
+  for (let b = 0; b < 4; b++) {
+    ctx.rotate(Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.ellipse(r * 0.5, -r * 0.35, r * 0.5, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bladeColor;
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // ── Hub circle (center cap) ───────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.fillStyle = active ? "#00b4d8" : "#1e3040";
+  ctx.fill();
+
+  // Glow ring when active
+  if (active) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(0,180,255,${0.2 + 0.15 * Math.sin(time / 300)})`;
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  }
+
+  // Outer border
+  ctx.strokeStyle = active ? "rgba(0,180,255,0.45)" : "rgba(40,80,100,0.25)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
 }
 
 // ─── Client-side machine adjacency check ─────────────────────────────────────
@@ -1461,6 +1576,18 @@ export default function Game() {
             const conns    = getPipeConns(bd, gx, gy);
             drawGeneratorBlock(ctx, gx, gy, genActive, now, fuelPct, conns);
 
+          } else if (blk === "mining_rig") {
+            // Mining Rig — ASIC hardware block. Active when connected to power via BFS.
+            // Each block placed = +1 TH (tracked server-side by scanMachineCluster).
+            const rigActive = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawMiningRig(ctx, gx, gy, rigActive, now);
+
+          } else if (blk === "fan_block") {
+            // Cooling Fan — reduces temperature rise per server tick.
+            // Shows as active (spinning) when part of a powered machine cluster.
+            const fanActive = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawFanBlock(ctx, gx, gy, fanActive, now);
+
           } else {
             // Standard terrain block: base color + top highlight + border
             ctx.fillStyle = BLOCK_COLORS[blk] ?? "#1e293b";
@@ -1489,8 +1616,10 @@ export default function Game() {
             const nightFactor = 1 - dayFactor;
             // Underground shadow is proportional to depth AND how dark it is outside
             const baseDark   = (1 - lightLevel) * 0.88 * nightFactor;
-            // Extra blanket darkness that covers the whole world at night
-            const nightBoost = nightFactor * 0.45;
+            // Extra blanket darkness — scaled by (1-lightLevel) so lamp-lit
+            // blocks are NOT smothered by ambient night darkness.
+            // At lightLevel=1 (fully lit by lamp), nightBoost → 0.
+            const nightBoost = nightFactor * 0.45 * (1 - lightLevel);
             const darkness   = Math.min(0.92, baseDark + nightBoost);
             if (darkness > 0.03) {
               ctx.fillStyle = `rgba(0,0,12,${darkness})`;

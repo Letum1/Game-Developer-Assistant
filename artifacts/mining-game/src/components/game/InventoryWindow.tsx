@@ -12,6 +12,8 @@ import { X, Package } from "lucide-react";
 const DISPLAY_NAMES: Record<string, string> = {
   data_center_rig:   "DC Rig",      // one-time unlock certificate — stays in inventory
   machine_core:      "M.Core",
+  mining_rig:        "Mining Rig",  // ASIC hardware — each block = 1 TH
+  fan_block:         "Cool.Fan",    // cooling fan — reduces temperature rise
   solar_panel_block: "Solar Pnl",
   data_cable:        "Pipe",
   battery_block:     "Battery",
@@ -42,6 +44,8 @@ const DISPLAY_NAMES: Record<string, string> = {
 const ITEM_ICON: Record<string, string> = {
   data_center_rig:   "🖥",    // Data Center Rig unlock certificate
   machine_core:      "⚙",
+  mining_rig:        "⛏",    // ASIC mining hardware
+  fan_block:         "💨",   // cooling fan
   solar_panel_block: "☀",
   data_cable:        "〜",
   battery_block:     "🔋",

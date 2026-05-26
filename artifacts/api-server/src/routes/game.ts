@@ -13,6 +13,7 @@
 // ============================================================
 
 import { Router, type IRouter } from "express";
+import type { PoolClient } from "pg";
 import { pool } from "../lib/db-pool";
 import { GameActionBody, GameActionHeader } from "@workspace/api-zod";
 import { BLOCK_REWARDS, MACHINE_BLOCK_TYPES, MINER_RATES, DIESEL_PER_CAN, MAX_FUEL } from "../lib/game-constants";
@@ -28,6 +29,8 @@ const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
   "lamp_block",
+  "mining_rig",      // ASIC rig hardware — returns itself so rigs are rearrangeable
+  "fan_block",       // cooling fan — returns itself so fans are rearrangeable
   "battery_block",   // returns itself so players can rearrange energy storage
   "generator_block", // returns itself so players can rearrange generators
 ]);
@@ -37,29 +40,35 @@ const OAK_BLOCKS = new Set(["block_oak_log", "block_oak_sapling"]);
 
 // ============================================================
 // BFS: find the Data Rig cluster connected to (startX, startY).
-// Returns { coreCount, solarCount } for that cluster.
+//
+// Returns per-block-type counts for the whole connected cluster:
+//   coreCount     — machine_core blocks (rig brain / dashboard)
+//   rigCount      — mining_rig blocks   (ASIC hardware, each = 1 TH, needs 1 power unit)
+//   fanCount      — fan_block blocks    (cooling — reduce temperature rise)
+//   solarCount    — solar_panel_block   (daytime-only power, each = 1 power unit)
+//   generatorCount — battery_block (+1) + generator_block (+2), always-on power
+//
+// Power demand = rigCount. Active rigs = min(rigCount, powerSupply).
 // ============================================================
-// Returns counts split by power source type:
-//   solarCount    — pure solar_panel_block blocks (only active during daytime)
-//   generatorCount — battery_block + generator_block (always-on, day or night)
-// This split is stored in the DB so the miner tick can apply day/night correctly.
 function scanMachineCluster(
   grid: string[][], startX: number, startY: number
-): { coreCount: number; solarCount: number; generatorCount: number } {
+): { coreCount: number; rigCount: number; fanCount: number; solarCount: number; generatorCount: number } {
   const rows = grid.length, cols = grid[0]?.length ?? 0;
   const visited = new Set<string>();
   const queue: [number, number][] = [[startX, startY]];
   visited.add(`${startX},${startY}`);
-  let coreCount = 0, solarCount = 0, generatorCount = 0;
+  let coreCount = 0, rigCount = 0, fanCount = 0, solarCount = 0, generatorCount = 0;
   const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
   while (queue.length > 0) {
     const [cx, cy] = queue.shift()!;
     const blk = grid[cy]?.[cx];
     if (!blk || !MACHINE_BLOCK_TYPES.has(blk)) continue;
     if (blk === "machine_core")      coreCount++;
-    if (blk === "solar_panel_block") solarCount++;         // daytime only
+    if (blk === "mining_rig")        rigCount++;           // 1 TH each, needs 1 power unit
+    if (blk === "fan_block")         fanCount++;           // reduces temperature rise
+    if (blk === "solar_panel_block") solarCount++;         // daytime-only power unit
     if (blk === "battery_block")     generatorCount++;     // always-on (stores solar charge)
-    if (blk === "generator_block")   generatorCount += 2;  // always-on, counts double
+    if (blk === "generator_block")   generatorCount += 2;  // always-on, counts as 2 units
     for (const [dx, dy] of dirs) {
       const nx = cx+dx, ny = cy+dy, key = `${nx},${ny}`;
       if (nx<0||ny<0||nx>=cols||ny>=rows||visited.has(key)) continue;
@@ -67,7 +76,7 @@ function scanMachineCluster(
       visited.add(key); queue.push([nx,ny]);
     }
   }
-  return { coreCount, solarCount, generatorCount };
+  return { coreCount, rigCount, fanCount, solarCount, generatorCount };
 }
 
 // ============================================================
@@ -75,22 +84,26 @@ function scanMachineCluster(
 // connected cluster, and update the user's miner accordingly.
 // ============================================================
 async function updateMinerFromWorld(
-  client: Awaited<ReturnType<typeof pool.connect>>,
+  client: PoolClient,
   userId: number, grid: string[][]
 ) {
   const rows = grid.length, cols = grid[0]?.length ?? 0;
   const scanned = new Set<string>();
-  let bestCores = 0, bestSolars = 0, bestGenerators = 0;
+  // Best cluster = the one with the most rig blocks (compute power).
+  // Ties broken by power supply; if still tied, first cluster found wins.
+  let bestCores = 0, bestRigs = 0, bestFans = 0, bestSolars = 0, bestGenerators = 0;
   const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const blk = grid[y][x], key = `${x},${y}`;
       if (!MACHINE_BLOCK_TYPES.has(blk) || scanned.has(key)) continue;
-      const { coreCount, solarCount, generatorCount } = scanMachineCluster(grid, x, y);
-      // Pick the cluster with the most total power sources
-      if (coreCount > 0 && (solarCount + generatorCount) > (bestSolars + bestGenerators)) {
-        bestCores = coreCount; bestSolars = solarCount; bestGenerators = generatorCount;
+      const { coreCount, rigCount, fanCount, solarCount, generatorCount } = scanMachineCluster(grid, x, y);
+      // Pick the cluster with the most mining_rig blocks (total compute hardware).
+      // Ties broken by available power supply.
+      if (coreCount > 0 && (rigCount > bestRigs || (rigCount === bestRigs && (solarCount + generatorCount) > (bestSolars + bestGenerators)))) {
+        bestCores = coreCount; bestRigs = rigCount; bestFans = fanCount;
+        bestSolars = solarCount; bestGenerators = generatorCount;
       }
       // Mark all cells in this cluster as visited
       const mark: [number, number][] = [[x, y]]; scanned.add(key);
@@ -106,25 +119,36 @@ async function updateMinerFromWorld(
     }
   }
 
-  if (bestCores > 0 && (bestSolars + bestGenerators) > 0) {
-    // Machine core has at least one power source connected — unlock and start.
-    // solar_panels = daytime-only count, generators = always-on count.
-    // Level is driven by total power sources, capped at 10.
-    const totalPower = bestSolars + bestGenerators;
-    const level = Math.min(10, totalPower);
+  // ── Determine if the rig should be running ──────────────────────────────
+  // Conditions: at least one machine_core + at least one mining_rig + some power.
+  // level column now stores rigCount (total mining_rig blocks placed).
+  // active rigs = min(rigCount, powerSupply) — computed in the miner tick.
+  if (bestCores > 0 && bestRigs > 0 && (bestSolars + bestGenerators) > 0) {
     await client.query(
-      `UPDATE miners SET unlocked=true, is_running=true, solar_panels=$1, generators=$2, level=$3 WHERE user_id=$4`,
-      [bestSolars, bestGenerators, level, userId]
+      `UPDATE miners
+         SET unlocked=true, is_running=true,
+             level=$1, solar_panels=$2, generators=$3, fans=$4
+       WHERE user_id=$5`,
+      [bestRigs, bestSolars, bestGenerators, bestFans, userId]
     );
   } else if (bestCores === 0) {
-    // No machine core in the world — rig is fully offline.
+    // No machine core at all — rig fully offline.
     await client.query(
-      "UPDATE miners SET is_running=false, solar_panels=0, generators=0 WHERE user_id=$1",
+      "UPDATE miners SET is_running=false, level=0, solar_panels=0, generators=0, fans=0 WHERE user_id=$1",
       [userId]
     );
+  } else if (bestRigs === 0) {
+    // Core exists but no mining_rig blocks placed — rig has no compute hardware.
+    await client.query(
+      "UPDATE miners SET is_running=false, level=0, fans=$1 WHERE user_id=$2",
+      [bestFans, userId]
+    );
   } else {
-    // Machine core exists but no solar panel connected — rig has no power.
-    await client.query("UPDATE miners SET is_running=false, solar_panels=0 WHERE user_id=$1", [userId]);
+    // Core + rigs exist but no power source connected.
+    await client.query(
+      "UPDATE miners SET is_running=false, level=$1, solar_panels=0, fans=$2 WHERE user_id=$3",
+      [bestRigs, bestFans, userId]
+    );
   }
 }
 

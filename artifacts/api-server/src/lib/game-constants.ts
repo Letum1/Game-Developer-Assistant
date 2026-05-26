@@ -56,6 +56,8 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   block_oak_log:       { gems: 2,  points: 5,   drop: "seed_oak",    dropChance: 0.5  },
   // Machine blocks return themselves (like grass/dirt) so players can re-arrange rigs
   machine_core:        { gems: 0,  points: 0                                          },
+  mining_rig:          { gems: 0,  points: 0                                          }, // ASIC rig hardware — returns itself
+  fan_block:           { gems: 0,  points: 0                                          }, // cooling fan — returns itself
   solar_panel_block:   { gems: 0,  points: 0                                          },
   data_cable:          { gems: 0,  points: 0                                          },
   lamp_block:          { gems: 0,  points: 0                                          },
@@ -72,6 +74,8 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
 // Note: lantern_block was removed — it was a duplicate of lamp_block.
 export const MACHINE_BLOCK_TYPES = new Set([
   "machine_core",
+  "mining_rig",        // ASIC/GPU hardware — each block = 1 TH of computing power
+  "fan_block",         // cooling fan — reduces temperature rise per tick
   "solar_panel_block",
   "data_cable",
   "lamp_block",        // underground lamp — lights up when powered
@@ -79,14 +83,14 @@ export const MACHINE_BLOCK_TYPES = new Set([
   "generator_block",   // diesel generator — always-on when fueled
 ]);
 
-// ─── Miner passive income rates (sat/day per level) ──────────────────────────
-// Stored as fractional USD-equivalent per second for precision in the ticker.
-// Level is determined by how many solar panels are connected to machine_core(s).
-// Rates are stored in sats/second for internal calculation precision.
-// IMPORTANT: The platform ceiling is exactly 30 sats/day — NEVER expose this
-// number to the player; show only the current rate tier, not the cap.
+// ─── Miner passive income rates (sats/second) indexed by active rig count ─────
+// "active rigs" = min(total mining_rig blocks placed, available power units).
+// Each additional powered rig block increases earnings — but only if power supply
+// supports it. Rates stored in sats/second; multiply by 86400 for sats/day.
+// IMPORTANT: Platform ceiling is 30 sats/day — never expose this to the player.
 export const MINER_RATES: Record<number, number> = {
-  1:  1  / 86400,   // tier 1 — entry level
+  0:  0,            // no active rigs — rig is idle
+  1:  1  / 86400,   // 1 active rig — entry level
   2:  2  / 86400,
   3:  5  / 86400,
   4:  8  / 86400,
@@ -94,8 +98,13 @@ export const MINER_RATES: Record<number, number> = {
   6:  17 / 86400,
   7:  22 / 86400,
   8:  27 / 86400,
-  9:  30 / 86400,   // tier 9 — platform ceiling (hidden from player)
+  9:  30 / 86400,   // 9+ active rigs — platform ceiling (hidden)
 };
+
+// ─── Fan cooling constant ──────────────────────────────────────────────────────
+// Each fan_block connected to the cluster reduces the miner's hourly temp rise.
+// With 4 fans the rig runs indefinitely without overheating at base level.
+export const FAN_COOLING_PER_HOUR = 2.5; // °C removed per fan_block per hour
 
 // ─── Gem cost to upgrade the rig via the Miner page ──────────────────────────
 // Costs escalate steeply — upgrades are a significant gem sink.
@@ -172,6 +181,8 @@ export const STORE_ITEMS = [
 export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   data_center_rig:   "Data Center Rig",
   machine_core:      "Machine Core",
+  mining_rig:        "Mining Rig",       // ASIC hardware block — each adds 1 TH
+  fan_block:         "Cooling Fan",      // reduces temperature rise per fan
   solar_panel_block: "Solar Panel Block",
   data_cable:        "Data Cable",
   battery_block:     "Battery Block",   // energy storage for nighttime operation
@@ -378,12 +389,42 @@ export const CRAFTING_RECIPES: Record<string, {
     result: "generator_block",
     resultQty: 1,
   },
+
+  // ── Mining Rig hardware block ──────────────────────────────────────────────
+  // Each mining_rig block = +1 TH of compute power and +1 power unit demand.
+  // If total power supply < total rig count, excess rigs are offline.
+  // Cheap to craft so players can build arrays of them.
+  mining_rig: {
+    displayName: "Mining Rig",
+    description: "ASIC mining hardware. Each block = 1 TH. Needs 1 power unit to run — balance with Solar Panels or Generators.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 3 },
+      { itemId: "raw_gold", quantity: 1 },
+    ],
+    result: "mining_rig",
+    resultQty: 1,
+  },
+
+  // ── Cooling Fan block ──────────────────────────────────────────────────────
+  // Placed in the cluster, each fan reduces temperature rise by FAN_COOLING_PER_HOUR.
+  // 4 fans fully cancel the base heat rise — rig stays cool indefinitely.
+  fan_block: {
+    displayName: "Cooling Fan",
+    description: "Industrial cooling fan. Each fan cuts temperature rise by 2.5°C/hr. 4 fans = rig stays cool indefinitely at base load.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 2 },
+    ],
+    result: "fan_block",
+    resultQty: 2,   // crafts 2 at once since you need several
+  },
 };
 
 // ─── Item category lookup (for inventory / store grouping) ───────────────────
 export const ITEM_CATEGORIES: Record<string, string> = {
   data_center_rig:   "machines",
   machine_core:      "machines",
+  mining_rig:        "machines",   // ASIC hardware — each block = 1 TH
+  fan_block:         "machines",   // cooling fan block
   solar_panel_block: "machines",
   data_cable:        "machines",
   battery_block:     "machines",   // energy storage block

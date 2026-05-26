@@ -1,13 +1,10 @@
 import { useEffect, useState } from "react";
-// ── Upgrade note: gem-based upgrades were removed. Rig level is now computed
-// automatically by the server (updateMinerFromWorld in game.ts) based on the
-// number of power-source blocks connected to the Machine Core via Data Pipes.
-// Formula: solar_panel = +1, battery_block = +1, generator_block = +2 (cap 9).
+// ── How rig level works (new model): level is now driven by world blocks, not gems.
+// Place Machine Core + Mining Rig blocks (each = 1 TH, needs 1 power unit to run).
+// Connect Solar Panels or Generators via Data Cables to supply power.
+// active_rigs = min(total_mining_rigs, power_supply). Rate scales with active_rigs.
+// Fan blocks reduce temperature rise — 4 fans = no overheating at base load.
 import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
-// ── Live BTC price for USD conversion —————————————————————————————————————
-// localBalance is stored in satoshis. We multiply by btcPrice/1e8 to get USD.
-// Max rate = 30 sats/day ≈ $0.03/day at $100k BTC — needs 8dp to show movement.
-import { useBtcPrice } from "@/hooks/use-btc-price";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,16 +35,12 @@ export default function Miner() {
   const verifyMonetization  = useVerifyMonetizationTask();
   const { toast } = useToast();
 
-  // Live BTC/USD price — refreshed every 60s from /api/btc-price (Yahoo Finance proxy).
-  // null while loading or if the fetch fails; balance falls back to raw sat display.
-  const btcPrice = useBtcPrice();
-
+  // localBalance is in satoshis and ticks locally every 100ms for visual dopamine.
+  // Synced with server every 30s via minerTick. Displayed directly in sats.
   const [localBalance, setLocalBalance] = useState<number>(0);
   const [adTimer, setAdTimer] = useState<number | null>(null);
   const [adToken, setAdToken] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
-  // Currency display toggle — "usd" shows dollar conversion, "btc" shows BTC / sat
-  const [currency, setCurrency] = useState<"usd" | "btc">("usd");
 
   // Sync initial
   useEffect(() => {
@@ -115,9 +108,7 @@ export default function Miner() {
       if (data.success) {
         // Convert collected satoshis to USD using live price; fallback to sat display if unavailable
         const collectedSats = data.collected ?? 0;
-        const collectedDisplay = btcPrice != null
-          ? `$${((collectedSats / 100_000_000) * btcPrice).toFixed(8)} USD`
-          : `${collectedSats.toFixed(4)} sat`;
+        const collectedDisplay = `${collectedSats.toFixed(4)} sat`;
         toast({
           title: "BALANCE COLLECTED",
           description: `${collectedDisplay} moved to your wallet.`,
@@ -174,9 +165,9 @@ export default function Miner() {
           </div>
           <div className="bg-black/50 border border-border rounded p-3 text-xs text-left space-y-1">
             <p className="text-muted-foreground uppercase tracking-widest text-[10px] mb-2">Required to craft:</p>
-            <div className="flex justify-between"><span className="text-gray-400">Raw Iron</span><span className="text-primary font-bold">×5</span></div>
-            <div className="flex justify-between"><span className="text-yellow-500">Raw Gold</span><span className="text-primary font-bold">×3</span></div>
-            <div className="flex justify-between"><span className="text-cyan-400">Raw Diamond</span><span className="text-primary font-bold">×1</span></div>
+            <div className="flex justify-between"><span className="text-gray-400">Raw Iron</span><span className="text-primary font-bold">×8</span></div>
+            <div className="flex justify-between"><span className="text-yellow-500">Raw Gold</span><span className="text-primary font-bold">×5</span></div>
+            <div className="flex justify-between"><span className="text-cyan-400">Raw Diamond</span><span className="text-primary font-bold">×2</span></div>
           </div>
           <div className="flex flex-col gap-2">
             <Link href="/craft">
@@ -198,32 +189,20 @@ export default function Miner() {
   const tempColor    = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
 
-  // ── Mining speed multiplier display (relative to base tier, no raw sat/day shown) ──
-  // Shows players the relative rate increase without revealing the platform cap.
-  const BASE_RATE       = 1 / 86400;  // tier-1 reference rate
-  const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 5× at level 5
+  // ── Daily yield in sats ───────────────────────────────────────────────────
+  const dailySats = (miner.ratePerSecond ?? 0) * 86400;
 
-  // ── Currency conversions (satoshis → USD or BTC) ─────────────────────────────
-  // localBalance is in satoshis; divide by 1e8 to get BTC, multiply by btcPrice to get USD.
-  // localBalanceUsd / dailyUsd: real-time USD values (null while btcPrice is loading).
-  // localBalanceBtc / dailyBtc: always available as satoshi or BTC display.
-  const localBalanceUsd: number | null = btcPrice != null
-    ? (localBalance / 100_000_000) * btcPrice
-    : null;
-  const dailyUsd: number | null = btcPrice != null
-    ? (miner.ratePerSecond * 86400 / 100_000_000) * btcPrice
-    : null;
-  // BTC-denominated values — always available (no price feed needed)
-  const localBalanceBtc = localBalance / 100_000_000;
-  const dailyBtc        = miner.ratePerSecond * 86400 / 100_000_000;
+  // ── Rig / power stats — the server adds these extra fields to the response ──
+  // Access via `as any` since the OpenAPI type doesn't include them yet.
+  const anyMiner   = miner as any;
+  const rigCount   = anyMiner.rigCount   ?? miner.level ?? 0; // total mining_rig blocks
+  const activeRigs = anyMiner.activeRigs ?? 0;                // rigs with power
+  const powerSupply  = anyMiner.powerSupply  ?? 0;            // max power units
+  const powerDemand  = anyMiner.powerDemand  ?? rigCount;     // power needed
+  const fanCount   = anyMiner.fanCount   ?? 0;                // cooling fan blocks
 
-  // ── Effective display level — server stores raw power units (can exceed 9) ──
-  // but MINER_RATES caps at index 9. Clamp for UI so players see the ceiling.
-  const displayLevel = Math.min(miner.level, MAX_LEVEL);
-
-  // ── Progress toward next level expressed as power units already placed ────
-  // Used to drive a progress bar in the structure upgrade panel.
-  // At max level (9) we show 100% to signal peak configuration.
+  // ── Effective display level — clamp to MINER_RATES ceiling ───────────────
+  const displayLevel = Math.min(rigCount, MAX_LEVEL);
   const levelProgress = displayLevel >= MAX_LEVEL ? 100 : (displayLevel / MAX_LEVEL) * 100;
 
   // ── Fuel / battery calculations ──────────────────────────────────────────
@@ -247,13 +226,13 @@ export default function Miner() {
     return `${s}s`;
   };
 
-  // Rig needs at least one power source (solar panel in world OR generator from store)
-  // to generate passive income. Without power it's always offline.
-  const hasPower = (miner.solarPanels ?? 0) > 0 || (miner.generators ?? 0) > 0;
+  // Rig needs power AND at least one mining_rig block to generate income.
+  const hasPower  = (miner.solarPanels ?? 0) > 0 || (miner.generators ?? 0) > 0;
+  const hasRigs   = rigCount > 0;
 
   // Status label shown in the badge
-  const statusLabel = !hasPower ? "NO POWER" : isOverheated ? "OVERHEATED" : miner.isRunning ? "ONLINE" : "OFFLINE";
-  const statusClass  = !hasPower
+  const statusLabel = !hasRigs ? "NO RIGS" : !hasPower ? "NO POWER" : isOverheated ? "OVERHEATED" : miner.isRunning ? "ONLINE" : "OFFLINE";
+  const statusClass  = (!hasRigs || !hasPower)
     ? "border-yellow-500 text-yellow-400"
     : miner.isRunning
     ? "border-primary text-primary"
@@ -262,20 +241,32 @@ export default function Miner() {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 md:p-8 space-y-6 max-w-6xl mx-auto font-mono overflow-y-auto h-full">
 
+      {/* ── No-rig warning banner ─────────────────────────────────────────── */}
+      {!hasRigs && (
+        <div className="border border-yellow-500/60 bg-yellow-500/5 rounded-lg p-4 flex items-start gap-3">
+          <Cpu className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-yellow-400 font-bold uppercase tracking-widest text-sm">No Mining Rigs Placed</p>
+            <p className="text-muted-foreground text-xs mt-1 leading-relaxed">
+              Craft <span className="text-yellow-400 font-bold">Mining Rig</span> blocks at the Workbench (3 Iron + 1 Gold each) and place them in your Machine Core cluster. Each rig = +1 TH. You also need a power source — Solar Panel, Battery, or Generator.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* ── No-power warning banner ────────────────────────────────────────── */}
-      {!hasPower && (
+      {hasRigs && !hasPower && (
         <div className="border border-yellow-500/60 bg-yellow-500/5 rounded-lg p-4 flex items-start gap-3">
           <Zap className="w-5 h-5 text-yellow-400 mt-0.5 shrink-0" />
           <div>
             <p className="text-yellow-400 font-bold uppercase tracking-widest text-sm">No Power Source Detected</p>
             <p className="text-muted-foreground text-xs mt-1 leading-relaxed">
-              {/* Power options — solar (daytime only), battery (24/7 via solar charge), generator (24/7 via diesel) */}
-              Your rig needs power before it can mine. Craft a{" "}
+              Your rig needs power. Craft a{" "}
               <span className="text-yellow-400 font-bold">Solar Panel Block</span> and place it in open sky connected to your{" "}
               <span className="text-yellow-400 font-bold">Machine Core</span> via{" "}
-              <span className="text-yellow-400 font-bold">Data Cables</span>. For 24/7 power, also craft a{" "}
-              <span className="text-blue-400 font-bold">Battery Block</span> (charges from solar) or a{" "}
-              <span className="text-orange-400 font-bold">Generator Block</span> (diesel, needs Diesel Cans from Store) — all at the Workbench.
+              <span className="text-yellow-400 font-bold">Data Cables</span>. For 24/7 power add a{" "}
+              <span className="text-blue-400 font-bold">Battery Block</span> or{" "}
+              <span className="text-orange-400 font-bold">Generator Block</span>.
             </p>
           </div>
         </div>
@@ -304,41 +295,18 @@ export default function Miner() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
-            {/* ── Currency toggle button (USD ↔ BTC) ──────────────────────────────── */}
-            {/* Lets the player view their earnings in dollars or bitcoin — same value, */}
-            {/* just converted. BTC mode always works; USD mode requires price feed.    */}
-            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-widest border border-border rounded-full overflow-hidden">
-              <button
-                onClick={() => setCurrency("usd")}
-                className={`px-3 py-1 transition-colors ${currency === "usd" ? "bg-primary text-black" : "text-muted-foreground hover:text-primary"}`}
-              >
-                USD
-              </button>
-              <button
-                onClick={() => setCurrency("btc")}
-                className={`px-3 py-1 transition-colors ${currency === "btc" ? "bg-primary text-black" : "text-muted-foreground hover:text-primary"}`}
-              >
-                BTC
-              </button>
-            </div>
-
-            {/* ── Live balance counter ─────────────────────────────────────────────── */}
-            {/* Ticks every 100ms via local interval. 8 decimal places so even tiny    */}
-            {/* earnings show visible movement. BTC mode shows ₿ amount in satoshis.   */}
+            {/* ── Live balance counter — ticks locally every 100ms ─────────────── */}
             <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
-              {currency === "usd"
-                ? (localBalanceUsd != null ? `$${localBalanceUsd.toFixed(8)}` : `${localBalance.toFixed(4)} sat`)
-                : `₿${localBalanceBtc.toFixed(8)}`}
+              {localBalance.toFixed(4)} <span className="text-2xl md:text-3xl text-primary/70">sat</span>
             </div>
 
-            {/* ── Daily yield — shown in whichever currency is selected ───────────── */}
+            {/* ── Daily yield in sats ──────────────────────────────────────────── */}
             <div className="flex items-center gap-2 text-muted-foreground text-sm uppercase tracking-widest">
               <TrendingUp className="w-4 h-4 text-primary" />
-              {currency === "usd"
-                ? (dailyUsd != null
-                    ? <><span className="text-primary font-bold">+${dailyUsd.toFixed(6)}</span> / day</>
-                    : <>Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span></>)
-                : <><span className="text-primary font-bold">+₿{dailyBtc.toFixed(8)}</span> / day</>}
+              <span className="text-primary font-bold">+{dailySats.toFixed(4)} sat</span> / day
+              {activeRigs > 0 && (
+                <span className="text-xs text-muted-foreground">({activeRigs} rig{activeRigs !== 1 ? "s" : ""} active)</span>
+              )}
             </div>
             {/* Collect button — transfers balance to wallet for permanent storage */}
             <Button
@@ -429,44 +397,73 @@ export default function Miner() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* ── System Specifications + Structure Upgrade Guide ─────────────── */}
-        {/* Level is auto-computed from the physical blocks in your game world. */}
-        {/* No gems required — just build more power infrastructure in the game. */}
+        {/* ── System Specifications ────────────────────────────────────────── */}
+        {/* Driven entirely by blocks in the game world — no gem upgrades.      */}
+        {/* Place more Mining Rig blocks to increase TH; match with power.      */}
         <Card className="border-border bg-sidebar/50">
           <CardHeader>
             <CardTitle className="text-white uppercase text-sm tracking-widest">System Specifications</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
 
-            {/* Current rig tier */}
-            <div className="flex justify-between items-center pb-2 border-b border-border">
-              <span className="text-muted-foreground uppercase text-xs tracking-widest">Rig Level</span>
-              <Badge variant="outline" className="border-primary text-primary font-bold">
-                LVL {displayLevel} / {MAX_LEVEL}
-              </Badge>
-            </div>
-
-            {/* Connected solar panels (daytime power) */}
+            {/* Total mining rig blocks placed */}
             <div className="flex justify-between items-center pb-2 border-b border-border">
               <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                <Sun className="w-3 h-3 text-yellow-400" /> Solar Arrays
+                <Cpu className="w-3 h-3 text-primary" /> Mining Rigs (TH)
+              </span>
+              <span className="text-primary font-bold">{rigCount}</span>
+            </div>
+
+            {/* Active rigs = powered rigs */}
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Activity className="w-3 h-3 text-green-400" /> Active Rigs
+              </span>
+              <span className={activeRigs < rigCount ? "text-yellow-400 font-bold" : "text-primary font-bold"}>
+                {activeRigs} / {rigCount}
+                {activeRigs < rigCount && <span className="text-yellow-400 text-[10px] ml-1">(underpowered)</span>}
+              </span>
+            </div>
+
+            {/* Power supply vs demand */}
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Zap className="w-3 h-3 text-yellow-400" /> Power
+              </span>
+              <span className={powerSupply < powerDemand ? "text-orange-400 font-bold" : "text-primary font-bold"}>
+                {powerSupply} / {powerDemand} units
+              </span>
+            </div>
+
+            {/* Solar panels + always-on breakdown */}
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Sun className="w-3 h-3 text-yellow-400" /> Solar
               </span>
               <span className="text-yellow-400 font-bold">{miner.solarPanels}</span>
             </div>
-
-            {/* Always-on power sources (batteries + generators) */}
             <div className="flex justify-between items-center pb-2 border-b border-border">
               <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                <Fuel className="w-3 h-3 text-orange-400" /> Always-On Sources
+                <Fuel className="w-3 h-3 text-orange-400" /> Always-On
               </span>
               <span className="text-orange-400 font-bold">{miner.generators}</span>
             </div>
 
-            {/* Level progress bar — fills toward MAX_LEVEL based on power units */}
+            {/* Cooling fans */}
+            <div className="flex justify-between items-center pb-2 border-b border-border">
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Snowflake className="w-3 h-3 text-cyan-400" /> Cooling Fans
+              </span>
+              <span className={fanCount === 0 ? "text-muted-foreground font-bold" : "text-cyan-400 font-bold"}>
+                {fanCount} {fanCount >= 4 ? "✓ optimal" : fanCount > 0 ? `(${4 - fanCount} more to zero out heat)` : "(add fans to reduce overheat)"}
+              </span>
+            </div>
+
+            {/* Progress bar — filled by active rig count toward ceiling */}
             <div className="space-y-1.5">
               <div className="flex justify-between text-[10px] text-muted-foreground uppercase tracking-widest">
-                <span>Power Output</span>
-                <span>{displayLevel} / {MAX_LEVEL} units</span>
+                <span>Compute Capacity</span>
+                <span>{displayLevel} / {MAX_LEVEL} TH</span>
               </div>
               <div className="w-full h-2 bg-black/60 border border-border rounded-full overflow-hidden">
                 <div
@@ -476,36 +473,36 @@ export default function Miner() {
               </div>
             </div>
 
-            {/* Upgrade guide — explains how to increase level without gems */}
+            {/* Upgrade guide */}
             {displayLevel >= MAX_LEVEL ? (
-              // Peak configuration reached
               <div className="border border-primary/30 rounded p-3 text-center">
                 <p className="text-primary text-xs uppercase tracking-widest font-bold">
-                  ⚡ Peak Configuration — Max Speed Reached
+                  ⚡ Max Capacity — 9 Rigs Active
                 </p>
               </div>
             ) : (
-              // Show players exactly what blocks to add in-world
               <div className="border border-primary/15 rounded p-3 space-y-2 bg-primary/5">
                 <p className="text-primary text-[10px] uppercase tracking-widest font-bold">
-                  Increase Level: Add Power Blocks
+                  Increase Earnings: Place More Rigs
                 </p>
                 <div className="space-y-1 text-[10px] text-muted-foreground leading-relaxed">
-                  {/* Each row shows the block, its power contribution, and the upgrade hint */}
                   <div className="flex justify-between">
-                    <span className="flex items-center gap-1"><Sun className="w-3 h-3 text-yellow-400" /> Solar Panel</span>
-                    <span className="text-yellow-400 font-bold">+1 unit</span>
+                    <span>⛏ Mining Rig block</span>
+                    <span className="text-primary font-bold">+1 TH, needs 1 power</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="flex items-center gap-1"><Zap className="w-3 h-3 text-blue-400" /> Battery Block</span>
-                    <span className="text-blue-400 font-bold">+1 unit</span>
+                    <span className="flex items-center gap-1"><Sun className="w-3 h-3 text-yellow-400" /> Solar Panel</span>
+                    <span className="text-yellow-400 font-bold">+1 power unit</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="flex items-center gap-1"><Fuel className="w-3 h-3 text-orange-400" /> Generator</span>
-                    <span className="text-orange-400 font-bold">+2 units</span>
+                    <span className="text-orange-400 font-bold">+2 power units</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>💨 Cooling Fan</span>
+                    <span className="text-cyan-400 font-bold">−2.5°C/hr each</span>
                   </div>
                 </div>
-                {/* Link to game world for immediate action */}
                 <Link href="/game">
                   <Button
                     size="sm"

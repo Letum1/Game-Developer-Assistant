@@ -5,10 +5,11 @@
 // so players earn passive income even when they are not in the game.
 //
 // The logic mirrors the manual POST /api/miner/tick endpoint:
-//   • Balance  += ratePerSecond × elapsed (only while running)
-//   • Temp     += TEMP_RISE_PER_HOUR / 3600 × elapsed (always while running)
+//   • Balance  += minerRate(activeRigs) × elapsed (only while running)
+//   • Temp     += max(0, TEMP_RISE - fans × FAN_COOLING) / 3600 × elapsed
 //   • Fuel     decreases for generator/battery blocks
-//   • is_running updated based on temp < MAX_TEMP and hasPower
+//   • is_running updated based on temp < MAX_TEMP and hasPower and rigCount > 0
+//   • activeRigs = min(rigCount, powerSupply) — rate scales with powered rigs
 //
 // This means:
 //   • A player who logged out at 20°C comes back 12 h later
@@ -21,6 +22,7 @@ import { pool } from "./db-pool";
 import {
   MINER_RATES,
   TEMP_RISE_PER_HOUR,
+  FAN_COOLING_PER_HOUR,
   MAX_TEMP,
   MAX_FUEL,
   FUEL_DRAIN_RATE,
@@ -28,9 +30,9 @@ import {
   getDayFactor,
 } from "./game-constants";
 
-// ─── Internal: compute rate for a given miner level ───────────────────────────
-function minerRate(level: number): number {
-  return MINER_RATES[Math.min(level, 9)] ?? MINER_RATES[9]!;
+// Rate is based on ACTIVE rigs (those with power), not total rig count.
+function minerRate(activeRigs: number): number {
+  return MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
 }
 
 // ─── Tick a single miner row ──────────────────────────────────────────────────
@@ -60,19 +62,26 @@ async function tickMiner(userId: number): Promise<boolean> {
       return false;
     }
 
-    const level       = parseInt(m.level);
+    // level column = total mining_rig blocks placed (rigCount)
+    // fans  column = fan_block count (cooling)
+    const rigCount    = parseInt(m.level) || 0;
+    const fans        = parseInt(m.fans)  || 0;
     const temp        = parseFloat(m.temperature);
     const solarPanels = parseInt(m.solar_panels) || 0;
     const generators  = parseInt(m.generators)   || 0;
 
     // Determine power availability at the time of the tick
-    // (We use the current real-world time for the dayFactor)
     const dayFactor   = getDayFactor(now.getTime());
     const solarActive = solarPanels > 0 && dayFactor > 0.15;
     const alwaysOn    = generators > 0;
     const hasPower    = solarActive || alwaysOn;
 
-    const isRunning   = m.is_running && temp < MAX_TEMP && hasPower;
+    // Active rigs = powered rigs only — excess rigs beyond supply are idle.
+    const powerSupply = (solarActive ? solarPanels : 0) + (alwaysOn ? generators : 0);
+    const activeRigs  = Math.min(rigCount, powerSupply);
+
+    // Requires rigCount > 0 (at least one mining_rig block placed)
+    const isRunning   = m.is_running && temp < MAX_TEMP && hasPower && rigCount > 0;
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
@@ -80,11 +89,12 @@ async function tickMiner(userId: number): Promise<boolean> {
     let   newFuel  = fuel;
 
     if (isRunning && elapsedSeconds > 0) {
-      const rate  = minerRate(level);
+      const rate  = minerRate(activeRigs);  // rate scales with active rig count
       // Accumulate earnings into current_balance (stays in DB until player collects)
       newBalance += rate * elapsedSeconds;
-      // Heat builds up proportionally to running time
-      newTemp = Math.min(MAX_TEMP, temp + (TEMP_RISE_PER_HOUR / 3600) * elapsedSeconds);
+      // Fan blocks reduce temperature rise — 4 fans = zero net rise at base load.
+      const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+      newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }
 
     // ── Fuel drain: always-on sources burn diesel even while overheated ──
@@ -101,11 +111,12 @@ async function tickMiner(userId: number): Promise<boolean> {
 
     newFuel = Math.round(newFuel);
 
-    // Re-check running state with updated values
-    const nowDay     = getDayFactor(now.getTime());
-    const nowSolar   = solarPanels > 0 && nowDay > 0.15;
-    const nowAlways  = generators > 0 && newFuel > 0;
-    const stillRunning = newTemp < MAX_TEMP && (nowSolar || nowAlways);
+    // Re-check running state with updated values.
+    // Requires rigCount > 0 — no mining_rig blocks = no compute = no income.
+    const nowDay      = getDayFactor(now.getTime());
+    const nowSolar    = solarPanels > 0 && nowDay > 0.15;
+    const nowAlways   = generators > 0 && newFuel > 0;
+    const stillRunning = newTemp < MAX_TEMP && (nowSolar || nowAlways) && rigCount > 0;
 
     await client.query(
       "UPDATE miners SET current_balance=$1, temperature=$2, is_running=$3, last_tick_at=$4, fuel=$5 WHERE user_id=$6",

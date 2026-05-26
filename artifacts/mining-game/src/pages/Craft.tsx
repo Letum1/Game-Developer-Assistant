@@ -49,6 +49,36 @@ const RECIPES = [
     hint: "Craft ONCE to unlock the Miner page — then craft Machine Core blocks to place in the world",
   },
 
+  // ── Mining Rig hardware (the actual TH-generating blocks) ────────────────
+  // Each block placed = 1 TH of compute. Needs 1 power unit to run.
+  // If power supply < total rigs, excess rigs stay offline.
+  {
+    recipe: "mining_rig",
+    displayName: "Mining Rig",
+    description: "ASIC mining hardware. Each block = 1 TH. Needs 1 power unit — if not enough electricity, the rig won't run. Build more Solar Panels or Generators to power more rigs.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 3, label: "Raw Iron" },
+      { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
+    ],
+    key: true,
+    machine: true,
+    emoji: "⛏️",
+    hint: "Needs 1 power unit each — underpower = offline rigs",
+  },
+
+  // ── Cooling Fan (reduces temperature rise in the cluster) ─────────────────
+  {
+    recipe: "fan_block",
+    displayName: "Cooling Fan",
+    description: "Industrial cooling fan. Each fan block cuts temperature rise by 2.5°C/hr. 4 fans = rig stays cool indefinitely at base load. Crafts 2 at once.",
+    ingredients: [
+      { itemId: "raw_iron", quantity: 2, label: "Raw Iron" },
+    ],
+    machine: true,
+    emoji: "💨",
+    hint: "4 fans = no more overheating at base rig load",
+  },
+
   // ── Machine building components ─────────────────────────────────────────
   {
     recipe: "machine_core",

@@ -11,6 +11,9 @@ export const minersTable = pgTable("miners", {
   solarPanels: integer("solar_panels").default(0).notNull(),
   generators: integer("generators").default(0).notNull(),
   fuel: integer("fuel").default(100).notNull(),
+  // fans: number of fan_block pieces connected to the machine cluster.
+  // Each fan reduces the temperature rise rate in the miner tick.
+  fans: integer("fans").default(0).notNull(),
   lastMaintenanceAt: timestamp("last_maintenance_at").defaultNow().notNull(),
   lastTickAt: timestamp("last_tick_at").defaultNow().notNull(),
 });

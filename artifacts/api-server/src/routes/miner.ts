@@ -12,6 +12,7 @@ import {
   MINER_UPGRADE_COSTS,
   UPGRADE_POINTS_REQUIRED,
   TEMP_RISE_PER_HOUR,
+  FAN_COOLING_PER_HOUR,
   MAX_TEMP,
   MAX_FUEL,
   FUEL_DRAIN_RATE,
@@ -21,30 +22,48 @@ import {
 
 const router: IRouter = Router();
 
-function minerRate(level: number): number {
-  // Clamp to ceiling tier (9) if somehow above it
-  return MINER_RATES[Math.min(level, 9)] ?? MINER_RATES[9];
+// Rate is based on ACTIVE rigs (those with power), not total rig count.
+// Clamped to ceiling tier 9.
+function minerRate(activeRigs: number): number {
+  return MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
 }
 
+// Formats raw DB row into the API response shape.
+// Key new fields:
+//   level / rigCount  — total mining_rig blocks placed (compute hardware)
+//   activeRigs        — rigs actually running (limited by power supply)
+//   powerSupply       — max power units available (solar+always-on, ignores day/night here)
+//   powerDemand       — power units needed = rigCount
+//   fanCount          — cooling fan blocks connected (reduce temp rise)
 function formatMiner(m: Record<string, unknown>) {
-  const level = parseInt(m.level as string);
-  // Gem cost for the NEXT upgrade (null if at ceiling)
-  const nextUpgradeCost   = MINER_UPGRADE_COSTS[level] ?? null;
-  // Activity points required for the NEXT upgrade (null if at ceiling)
-  const nextUpgradePoints = UPGRADE_POINTS_REQUIRED[level] ?? null;
+  const rigCount    = parseInt(m.level as string) || 0;  // level = total mining_rig blocks
+  const fanCount    = parseInt(m.fans  as string) || 0;
+  const solarPanels = parseInt(m.solar_panels as string) || 0;
+  const generators  = parseInt(m.generators   as string) || 0;
+  // Max possible power supply (day + always-on combined) — actual supply is
+  // day/night-adjusted in the tick, but show full capacity here for the UI.
+  const powerSupply  = solarPanels + generators;
+  const activeRigs   = Math.min(rigCount, powerSupply);  // rough estimate for display
+  const nextUpgradeCost   = MINER_UPGRADE_COSTS[rigCount] ?? null;
+  const nextUpgradePoints = UPGRADE_POINTS_REQUIRED[rigCount] ?? null;
   return {
     userId: m.user_id,
-    level,
+    level:        rigCount,    // kept for API compat; semantically = total rig count
+    rigCount,                  // total mining_rig blocks placed
+    fanCount,                  // cooling fan blocks
+    solarPanels,
+    generators,
+    powerSupply,               // max power units (solar + always-on)
+    powerDemand:  rigCount,    // power units needed to run all rigs
+    activeRigs,                // rigs that are powered (capped by supply)
     unlocked: m.unlocked,
     currentBalance: parseFloat(m.current_balance as string),
     temperature: parseFloat(m.temperature as string),
     isRunning: m.is_running,
-    solarPanels: m.solar_panels,
-    generators: m.generators,
     fuel: m.fuel,
     lastMaintenanceAt: (m.last_maintenance_at as Date).toISOString(),
     lastTickAt: (m.last_tick_at as Date).toISOString(),
-    ratePerSecond: minerRate(level),
+    ratePerSecond: minerRate(activeRigs),   // rate depends on powered rigs
     nextUpgradeCost,
     nextUpgradePoints,
   };
@@ -87,8 +106,11 @@ router.post("/miner/tick", async (req, res) => {
     const lastTick = new Date(m.last_tick_at);
     const elapsedSeconds = (now.getTime() - lastTick.getTime()) / 1000;
 
-    const level = parseInt(m.level);
-    const temp = parseFloat(m.temperature);
+    // level column now stores total mining_rig block count (rigCount).
+    // fans column stores fan_block count connected to the cluster.
+    const rigCount    = parseInt(m.level) || 0;   // total mining_rig blocks placed
+    const fans        = parseInt(m.fans)  || 0;   // fan_block count (cooling)
+    const temp        = parseFloat(m.temperature);
     const solarPanels = parseInt(m.solar_panels) || 0;
     const generators  = parseInt(m.generators)   || 0;
 
@@ -100,7 +122,13 @@ router.post("/miner/tick", async (req, res) => {
     const alwaysOn     = generators > 0;                       // battery / generator
     const hasPower     = solarActive || alwaysOn;
 
-    const isRunning = m.is_running && temp < MAX_TEMP && hasPower;
+    // Active rigs = min(rigCount, power supply). Power supply = powered solar + always-on.
+    // Excess rigs beyond power supply are idle (not counted for rate).
+    const powerSupply = (solarActive ? solarPanels : 0) + (alwaysOn ? generators : 0);
+    const activeRigs  = Math.min(rigCount, powerSupply);
+
+    // Rig requires at least one mining_rig block AND power to generate income.
+    const isRunning = m.is_running && temp < MAX_TEMP && hasPower && rigCount > 0;
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
@@ -108,10 +136,13 @@ router.post("/miner/tick", async (req, res) => {
     let   newFuel  = fuel;
 
     if (isRunning && elapsedSeconds > 0) {
-      const rate = minerRate(level);
+      const rate = minerRate(activeRigs);   // rate scales with powered rig count
       newBalance += rate * elapsedSeconds;
-      // Temperature rises proportional to uptime
-      newTemp = Math.min(MAX_TEMP, temp + (TEMP_RISE_PER_HOUR / 3600) * elapsedSeconds);
+      // Temperature rise is reduced by fan_block count.
+      // Each fan lowers hourly rise by FAN_COOLING_PER_HOUR (default 2.5°C/hr).
+      // 4 fans = zero temperature rise at base load.
+      const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+      newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }
 
     // ── Fuel drain: always-on sources (batteries + generators) burn fuel ──
@@ -130,12 +161,12 @@ router.post("/miner/tick", async (req, res) => {
 
     newFuel = Math.round(newFuel); // store as integer
 
-    // Rig shuts down when overheated OR when it currently has no power.
+    // Rig shuts down when overheated, has no power, or has no mining_rig hardware.
     // Re-evaluate hasPower with updated fuel so we catch a just-emptied tank.
     const nowDayFactor  = getDayFactor(Date.now());
     const nowSolar      = solarPanels > 0 && nowDayFactor > 0.15;
     const nowAlwaysOn   = generators > 0 && newFuel > 0;
-    const stillRunning  = newTemp < MAX_TEMP && (nowSolar || nowAlwaysOn);
+    const stillRunning  = newTemp < MAX_TEMP && (nowSolar || nowAlwaysOn) && rigCount > 0;
 
     await client.query(
       "UPDATE miners SET current_balance=$1, temperature=$2, is_running=$3, last_tick_at=$4, fuel=$5 WHERE user_id=$6",

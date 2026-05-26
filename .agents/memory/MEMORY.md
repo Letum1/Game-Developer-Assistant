@@ -1,1 +1,2 @@
 - [Production mode setup](production-mode.md) — Express 5 wildcard bug + how to run the game in production mode for fast mobile loads
+- [pg PoolClient typing](pg-poolclient-typing.md) — avoid Awaited<ReturnType<typeof pool.connect>>; import PoolClient directly instead
