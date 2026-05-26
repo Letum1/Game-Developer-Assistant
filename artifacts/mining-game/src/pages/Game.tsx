@@ -457,6 +457,18 @@ function drawLampBlock(ctx: CanvasRenderingContext2D, bx: number, by: number, po
     // Glow halo on the block itself
     ctx.shadowColor = "#fbbf24";
     ctx.shadowBlur  = 6 + pulse * 10;
+
+    // ── Bitcoin ₿ symbol drawn in the bulb center ──────────────────────────
+    // Ties the lamp visually to the game's BTC theme; glows brighter on pulse.
+    ctx.save();
+    ctx.shadowColor = "rgba(255,220,80,0.9)";
+    ctx.shadowBlur  = 4 + pulse * 8;
+    ctx.fillStyle   = `rgba(60,20,0,${0.85 + pulse * 0.15})`;   // dark orange — readable on bright bulb
+    ctx.font        = `bold ${Math.round(bulbW * 0.72)}px monospace`;
+    ctx.textAlign    = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("₿", bulbX + bulbW / 2, bulbY + bulbH / 2 + 1);
+    ctx.restore();
   } else {
     // Unlit: gray-dark glass — lamp is off / disconnected
     ctx.fillStyle = "rgba(60,55,45,0.9)";
@@ -1550,23 +1562,33 @@ export default function Game() {
           const cy = gy * BS + BS / 2;
 
           // Lantern is brighter and warmer than lamp (open flame vs enclosed bulb).
-          // Larger radius and higher alpha so underground areas are clearly lit.
-          const r     = isLantern ? BS * 5.5 : BS * 4.5;
+          // nightBoost scales halo alpha with the time of day:
+          //   dayFactor = 1.0 (full sun) → nightBoost = 0.05  (barely visible glow)
+          //   dayFactor = 0.0 (full night) → nightBoost = 1.0  (full brightness)
+          // This prevents the halo from looking garish in daylight while ensuring
+          // it actually illuminates the scene after the night overlay is applied.
+          const nightBoost = Math.max(0.05, 1 - dayFactor);
+
+          const r     = isLantern ? BS * 6.5 : BS * 8;
           const pulse = isLantern
             ? 0.70 + 0.30 * Math.sin(now / 120 + gx * 1.7)  // flicker like a flame
-            : 0.60 + 0.40 * Math.sin(now / 300);
+            : 0.75 + 0.25 * Math.sin(now / 300);             // gentle breath for lamp
 
           const innerColor = isLantern
-            ? `rgba(255,160,30,${0.90 * pulse})`    // strong warm orange for lantern
-            : `rgba(255,200,80,${0.55 * pulse})`;   // cooler amber for lamp
+            ? `rgba(255,160,30,${0.92 * pulse * nightBoost})`
+            : `rgba(255,210,90,${0.90 * pulse * nightBoost})`;
           const midColor   = isLantern
-            ? `rgba(255,100,15,${0.50 * pulse})`    // deep orange mid-ring
-            : `rgba(255,160,40,${0.25 * pulse})`;
+            ? `rgba(255,100,15,${0.55 * pulse * nightBoost})`
+            : `rgba(255,170,50,${0.55 * pulse * nightBoost})`;
+          const outerColor = isLantern
+            ? `rgba(255,60,0,${0.12 * pulse * nightBoost})`
+            : `rgba(255,140,20,${0.18 * pulse * nightBoost})`;
 
           const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-          grad.addColorStop(0,   innerColor);
-          grad.addColorStop(0.3, midColor);
-          grad.addColorStop(1,   "rgba(0,0,0,0)");
+          grad.addColorStop(0,    innerColor);
+          grad.addColorStop(0.25, midColor);
+          grad.addColorStop(0.6,  outerColor);
+          grad.addColorStop(1,    "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
           ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
         }
