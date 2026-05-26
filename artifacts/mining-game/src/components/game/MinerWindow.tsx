@@ -6,7 +6,7 @@
 // same key stats as the full Miner page without leaving the canvas.
 // ============================================================
 
-import { X, Thermometer, Zap, Server, Fuel } from "lucide-react";
+import { X, Thermometer, Server, Fuel } from "lucide-react";
 
 type MinerData = {
   level:          number;
@@ -80,15 +80,7 @@ export default function MinerWindow({ minerData, onClose }: MinerWindowProps) {
               <span style={{ color: tempColor }} className="font-bold">{temp.toFixed(0)}°C</span>
             </div>
 
-            {/* Rate */}
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground flex items-center gap-1">
-                <Zap className="w-3 h-3" /> Rate
-              </span>
-              <span className="text-accent font-bold">
-                {(minerData.ratePerSecond * 86400).toFixed(4)}/day
-              </span>
-            </div>
+            {/* Rate row intentionally hidden — shown as USD on Wallet page */}
 
             {/* Fuel gauge */}
             <div className="flex justify-between items-center">

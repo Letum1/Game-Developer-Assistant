@@ -9,6 +9,7 @@ import inventoryRouter from "./inventory";
 import storeRouter from "./store";
 import leaderboardRouter from "./leaderboard";
 import monetizationRouter from "./monetization";
+import btcPriceRouter from "./btcPrice";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(inventoryRouter);
 router.use(storeRouter);
 router.use(leaderboardRouter);
 router.use(monetizationRouter);
+router.use(btcPriceRouter);
 
 export default router;

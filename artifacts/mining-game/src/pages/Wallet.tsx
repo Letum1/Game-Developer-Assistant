@@ -20,11 +20,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Wallet, Gem, DollarSign, Cpu, Download, Thermometer, Zap } from "lucide-react";
+import { useBtcPrice, satoshiToUsd } from "@/hooks/use-btc-price";
 
 export default function WalletPage() {
   const queryClient                  = useQueryClient();
   const { toast }                    = useToast();
   const [isCollecting, setCollecting] = useState(false);
+  const btcPrice                     = useBtcPrice();
 
   const { data: wallet } = useGetWallet({
     query: { refetchInterval: 10000, queryKey: getGetWalletQueryKey() },
@@ -54,9 +56,13 @@ export default function WalletPage() {
       });
       const data = await res.json();
       if (data.success) {
+        const collectedSat = data.collected ?? 0;
+        const collectedDisplay = btcPrice
+          ? satoshiToUsd(collectedSat, btcPrice)
+          : `${collectedSat.toFixed(0)} sat`;
         toast({
           title:       "COLLECTED ✓",
-          description: `$${data.collected?.toFixed(8) ?? "0"} saved to your wallet.`,
+          description: `${collectedDisplay} saved to your wallet.`,
           className:   "bg-black border-primary text-primary font-mono uppercase",
         });
         queryClient.invalidateQueries({ queryKey: getGetWalletQueryKey() });
@@ -99,8 +105,15 @@ export default function WalletPage() {
             Saved Balance
           </div>
           <div className="text-4xl font-black text-white tabular-nums tracking-tighter">
-            ${(wallet?.realBalance ?? 0).toFixed(8)}
+            {btcPrice
+              ? satoshiToUsd(wallet?.realBalance ?? 0, btcPrice)
+              : `${(wallet?.realBalance ?? 0).toFixed(0)} sat`}
           </div>
+          {btcPrice && (
+            <div className="text-muted-foreground text-[10px] tabular-nums">
+              {(wallet?.realBalance ?? 0).toFixed(0)} sat · 1 BTC = ${btcPrice.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+            </div>
+          )}
           <p className="text-muted-foreground text-xs">
             Collected earnings — persistent across sessions.
           </p>
@@ -116,8 +129,15 @@ export default function WalletPage() {
           </div>
 
           <div className="text-3xl font-black text-accent tabular-nums tracking-tighter">
-            ${(miner?.currentBalance ?? 0).toFixed(8)}
+            {btcPrice
+              ? satoshiToUsd(miner?.currentBalance ?? 0, btcPrice)
+              : `${(miner?.currentBalance ?? 0).toFixed(0)} sat`}
           </div>
+          {btcPrice && (
+            <div className="text-muted-foreground text-[10px] tabular-nums">
+              {(miner?.currentBalance ?? 0).toFixed(0)} sat
+            </div>
+          )}
 
           <p className="text-muted-foreground text-xs">
             Earned since last collect. Click Collect to save this permanently.
@@ -169,7 +189,9 @@ export default function WalletPage() {
               <div className="space-y-0.5">
                 <div className="text-muted-foreground text-xs uppercase">Rate</div>
                 <div className="text-accent font-bold">
-                  {(miner.ratePerSecond * 86400).toFixed(4)} sat/day
+                  {btcPrice
+                    ? satoshiToUsd(miner.ratePerSecond * 86400, btcPrice) + "/day"
+                    : `${(miner.ratePerSecond * 86400).toFixed(4)} sat/day`}
                 </div>
               </div>
 
