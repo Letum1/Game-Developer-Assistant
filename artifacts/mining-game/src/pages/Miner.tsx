@@ -46,6 +46,8 @@ export default function Miner() {
   const [adTimer, setAdTimer] = useState<number | null>(null);
   const [adToken, setAdToken] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
+  // Currency display toggle — "usd" shows dollar conversion, "btc" shows BTC / sat
+  const [currency, setCurrency] = useState<"usd" | "btc">("usd");
 
   // Sync initial
   useEffect(() => {
@@ -201,18 +203,19 @@ export default function Miner() {
   const BASE_RATE       = 1 / 86400;  // tier-1 reference rate
   const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 5× at level 5
 
-  // ── USD conversions (satoshis → USD) ──────────────────────────────────────────
-  // localBalance is in satoshis; divide by 1e8 to get BTC, multiply by spot price.
-  // localBalanceUsd: real-time counter shown in the big display card.
-  // dailyUsd: projected daily earnings in USD — shown instead of raw ×speed so
-  //           players see a dollar figure rather than a raw sat/day multiplier.
-  // Both null while btcPrice is loading (price fetches on mount, retries every 60s).
+  // ── Currency conversions (satoshis → USD or BTC) ─────────────────────────────
+  // localBalance is in satoshis; divide by 1e8 to get BTC, multiply by btcPrice to get USD.
+  // localBalanceUsd / dailyUsd: real-time USD values (null while btcPrice is loading).
+  // localBalanceBtc / dailyBtc: always available as satoshi or BTC display.
   const localBalanceUsd: number | null = btcPrice != null
     ? (localBalance / 100_000_000) * btcPrice
     : null;
   const dailyUsd: number | null = btcPrice != null
     ? (miner.ratePerSecond * 86400 / 100_000_000) * btcPrice
     : null;
+  // BTC-denominated values — always available (no price feed needed)
+  const localBalanceBtc = localBalance / 100_000_000;
+  const dailyBtc        = miner.ratePerSecond * 86400 / 100_000_000;
 
   // ── Effective display level — server stores raw power units (can exceed 9) ──
   // but MINER_RATES caps at index 9. Clamp for UI so players see the ceiling.
@@ -301,23 +304,41 @@ export default function Miner() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
-            {/* ── Live balance counter ─────────────────────────────────────────────── */}
-            {/* localBalanceUsd ticks every 100ms via the local interval (ratePerSecond/10).  */}
-            {/* At 30 sats/day + $100k BTC the counter moves ~$0.00000035 per second —        */}
-            {/* 8 decimal places makes the motion visible even at low earning tiers.           */}
-            {/* Falls back to raw satoshi display while BTC price is loading.                  */}
-            <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
-              {localBalanceUsd != null
-                ? `$${localBalanceUsd.toFixed(8)}`
-                : `${localBalance.toFixed(4)} sat`}
+            {/* ── Currency toggle button (USD ↔ BTC) ──────────────────────────────── */}
+            {/* Lets the player view their earnings in dollars or bitcoin — same value, */}
+            {/* just converted. BTC mode always works; USD mode requires price feed.    */}
+            <div className="flex items-center gap-1 text-xs font-bold uppercase tracking-widest border border-border rounded-full overflow-hidden">
+              <button
+                onClick={() => setCurrency("usd")}
+                className={`px-3 py-1 transition-colors ${currency === "usd" ? "bg-primary text-black" : "text-muted-foreground hover:text-primary"}`}
+              >
+                USD
+              </button>
+              <button
+                onClick={() => setCurrency("btc")}
+                className={`px-3 py-1 transition-colors ${currency === "btc" ? "bg-primary text-black" : "text-muted-foreground hover:text-primary"}`}
+              >
+                BTC
+              </button>
             </div>
 
-            {/* ── Daily yield in USD — replaces raw ×multiplier so players see dollars ── */}
+            {/* ── Live balance counter ─────────────────────────────────────────────── */}
+            {/* Ticks every 100ms via local interval. 8 decimal places so even tiny    */}
+            {/* earnings show visible movement. BTC mode shows ₿ amount in satoshis.   */}
+            <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
+              {currency === "usd"
+                ? (localBalanceUsd != null ? `$${localBalanceUsd.toFixed(8)}` : `${localBalance.toFixed(4)} sat`)
+                : `₿${localBalanceBtc.toFixed(8)}`}
+            </div>
+
+            {/* ── Daily yield — shown in whichever currency is selected ───────────── */}
             <div className="flex items-center gap-2 text-muted-foreground text-sm uppercase tracking-widest">
               <TrendingUp className="w-4 h-4 text-primary" />
-              {dailyUsd != null
-                ? <><span className="text-primary font-bold">+${dailyUsd.toFixed(6)}</span> / day</>
-                : <>Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span></>}
+              {currency === "usd"
+                ? (dailyUsd != null
+                    ? <><span className="text-primary font-bold">+${dailyUsd.toFixed(6)}</span> / day</>
+                    : <>Speed: <span className="text-primary font-bold">×{speedMultiplier.toFixed(2)}</span></>)
+                : <><span className="text-primary font-bold">+₿{dailyBtc.toFixed(8)}</span> / day</>}
             </div>
             {/* Collect button — transfers balance to wallet for permanent storage */}
             <Button

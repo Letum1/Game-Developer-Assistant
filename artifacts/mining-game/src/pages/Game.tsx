@@ -446,28 +446,30 @@ function drawLampBlock(ctx: CanvasRenderingContext2D, bx: number, by: number, po
   const bulbH  = BS - 16;
 
   if (powered) {
-    // Lit: warm amber inner glow, bright center
-    ctx.fillStyle = `rgba(255,180,20,${0.7 + pulse * 0.3})`;
+    // Lit: warm amber inner glow, soft center (toned down from previous over-bright version)
+    ctx.fillStyle = `rgba(255,170,15,${0.55 + pulse * 0.2})`;
     ctx.fillRect(bulbX, bulbY, bulbW, bulbH);
 
-    // Bright core hotspot in the very center
-    ctx.fillStyle = `rgba(255,240,180,${0.85 + pulse * 0.15})`;
+    // Soft hotspot in the very center — not blinding white
+    ctx.fillStyle = `rgba(255,230,140,${0.65 + pulse * 0.15})`;
     ctx.fillRect(bulbX + 4, bulbY + 4, bulbW - 8, bulbH - 8);
 
-    // Glow halo on the block itself
+    // Subtle glow on the block itself — reduced shadowBlur so it doesn't bleed too far
     ctx.shadowColor = "#fbbf24";
-    ctx.shadowBlur  = 6 + pulse * 10;
+    ctx.shadowBlur  = 3 + pulse * 4;
 
-    // ── Bitcoin ₿ symbol drawn in the bulb center ──────────────────────────
-    // Ties the lamp visually to the game's BTC theme; glows brighter on pulse.
+    // Small diagonal light-ray marks in the bulb corners — simple visual, no symbol
     ctx.save();
-    ctx.shadowColor = "rgba(255,220,80,0.9)";
-    ctx.shadowBlur  = 4 + pulse * 8;
-    ctx.fillStyle   = `rgba(60,20,0,${0.85 + pulse * 0.15})`;   // dark orange — readable on bright bulb
-    ctx.font        = `bold ${Math.round(bulbW * 0.72)}px monospace`;
-    ctx.textAlign    = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("₿", bulbX + bulbW / 2, bulbY + bulbH / 2 + 1);
+    ctx.strokeStyle = `rgba(255,210,80,${0.4 + pulse * 0.3})`;
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    // Top-left to bottom-right ray
+    ctx.moveTo(bulbX + 3,         bulbY + 3);
+    ctx.lineTo(bulbX + bulbW - 3, bulbY + bulbH - 3);
+    // Top-right to bottom-left ray
+    ctx.moveTo(bulbX + bulbW - 3, bulbY + 3);
+    ctx.lineTo(bulbX + 3,         bulbY + bulbH - 3);
+    ctx.stroke();
     ctx.restore();
   } else {
     // Unlit: gray-dark glass — lamp is off / disconnected
@@ -1104,6 +1106,32 @@ export default function Game() {
         }
       }
     }
+    // ── Second pass: spread light from lamp_block positions ──────────────
+    // Lamp blocks count as local light sources in the static light map so that
+    // nearby underground blocks have less darkness baked in during rendering.
+    // We treat every lamp_block as always-lit here (power state depends on
+    // dayFactor which changes per-frame; the darkness overlay still dims the
+    // area at night, but block-level blackness is pre-reduced near lamps).
+    const LAMP_REACH = 7; // illumination radius in blocks
+    for (let gy = 0; gy < h; gy++) {
+      for (let gx = 0; gx < w; gx++) {
+        if (bd[gy][gx] !== "lamp_block") continue;
+        // Spread warm light in a radius around each lamp
+        for (let dy = -LAMP_REACH; dy <= LAMP_REACH; dy++) {
+          for (let dx = -LAMP_REACH; dx <= LAMP_REACH; dx++) {
+            const ny = gy + dy;
+            const nx = gx + dx;
+            if (ny < 0 || ny >= h || nx < 0 || nx >= w) continue;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > LAMP_REACH) continue;
+            // Linear falloff: lamp center = 0.92 brightness, edge = 0
+            const lampContrib = 0.92 * (1 - dist / LAMP_REACH);
+            lm[ny][nx] = Math.max(lm[ny][nx], lampContrib);
+          }
+        }
+      }
+    }
+
     lightMapRef.current = lm;
   }, [world]);
 
@@ -1569,20 +1597,23 @@ export default function Game() {
           // it actually illuminates the scene after the night overlay is applied.
           const nightBoost = Math.max(0.05, 1 - dayFactor);
 
-          const r     = isLantern ? BS * 6.5 : BS * 8;
+          // Lamp halo radius reduced from BS*8 → BS*5 so it's not overpowering;
+          // illumination of nearby blocks is handled by the light map lamp pass.
+          const r     = isLantern ? BS * 5.5 : BS * 5;
           const pulse = isLantern
             ? 0.70 + 0.30 * Math.sin(now / 120 + gx * 1.7)  // flicker like a flame
             : 0.75 + 0.25 * Math.sin(now / 300);             // gentle breath for lamp
 
+          // Alpha values reduced — lamp is warm but not blinding
           const innerColor = isLantern
-            ? `rgba(255,160,30,${0.92 * pulse * nightBoost})`
-            : `rgba(255,210,90,${0.90 * pulse * nightBoost})`;
+            ? `rgba(255,160,30,${0.70 * pulse * nightBoost})`
+            : `rgba(255,210,90,${0.60 * pulse * nightBoost})`;
           const midColor   = isLantern
-            ? `rgba(255,100,15,${0.55 * pulse * nightBoost})`
-            : `rgba(255,170,50,${0.55 * pulse * nightBoost})`;
+            ? `rgba(255,100,15,${0.40 * pulse * nightBoost})`
+            : `rgba(255,170,50,${0.35 * pulse * nightBoost})`;
           const outerColor = isLantern
-            ? `rgba(255,60,0,${0.12 * pulse * nightBoost})`
-            : `rgba(255,140,20,${0.18 * pulse * nightBoost})`;
+            ? `rgba(255,60,0,${0.10 * pulse * nightBoost})`
+            : `rgba(255,140,20,${0.12 * pulse * nightBoost})`;
 
           const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
           grad.addColorStop(0,    innerColor);
