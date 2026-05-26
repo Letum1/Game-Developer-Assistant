@@ -28,11 +28,32 @@ import { Link } from "wouter";
 // Group 1: Machine building blocks (the new Minecraft-redstone style system)
 // Group 2: Support / maintenance items
 const RECIPES = [
+  // ── Step 0: Data Center Rig — one-time unlock certificate ────────────────
+  // This is NOT a placeable block. Crafting it:
+  //   1. Adds a "Data Center Rig" item to your inventory (proof of rig)
+  //   2. Fires the server-side `unlocksMiner` flag → Miner page becomes active
+  // You only need to craft this ONCE. Then craft Machine Core blocks separately.
+  {
+    recipe: "data_center_rig",
+    displayName: "Data Center Rig",
+    description: "Assemble your Data Center and unlock the passive Miner dashboard. Craft this ONCE — it stays in your inventory as your rig certificate.",
+    ingredients: [
+      { itemId: "raw_iron",    quantity: 8, label: "Raw Iron"    },
+      { itemId: "raw_gold",    quantity: 5, label: "Raw Gold"    },
+      { itemId: "raw_diamond", quantity: 2, label: "Raw Diamond" },
+    ],
+    key: true,
+    machine: true,
+    unlock: true,   // special flag: this is the one-time miner unlock item
+    emoji: "🖥️",
+    hint: "Craft ONCE to unlock the Miner page — then craft Machine Core blocks to place in the world",
+  },
+
   // ── Machine building components ─────────────────────────────────────────
   {
     recipe: "machine_core",
     displayName: "Machine Core",
-    description: "The brain of your Data Rig. Place it in the world, then put Solar Panels next to it to activate passive earning.",
+    description: "The CPU block of your Data Rig. Place it in the world, then put Solar Panels next to it to start passive earning.",
     ingredients: [
       { itemId: "raw_iron",    quantity: 5, label: "Raw Iron"    },
       { itemId: "raw_gold",    quantity: 2, label: "Raw Gold"    },
@@ -41,7 +62,7 @@ const RECIPES = [
     key: true,          // key item — highlighted prominently
     machine: true,      // machine component flag for styling
     emoji: "⚙️",
-    hint: "Place in world → add Solar Panels to power it",
+    hint: "Placeable block — put in world → add Solar Panels to power it",
   },
   {
     recipe: "solar_panel_block",
@@ -154,11 +175,20 @@ export default function Craft() {
       {
         onSuccess: (res) => {
           if (res.success) {
+            // Different toast copy depending on what was just crafted:
+            // - rig unlock → celebrate that the miner is now active
+            // - placeable machine block → remind player to go place it in the world
+            // - support items → generic success
+            const isUnlock   = "unlock" in r && r.unlock;
+            const isMachine  = "machine" in r && r.machine && !isUnlock;
+            const description = isUnlock
+              ? "Your Data Center Rig is assembled! Head to the Miner page — passive income is now running."
+              : isMachine
+                ? "Go to the game world and place it! Add Solar Panels next to the Machine Core to power your rig."
+                : (res.message ?? undefined);
             toast({
               title: `CRAFTED: ${r.displayName.toUpperCase()}`,
-              description: ("machine" in r && r.machine)
-                ? "Go to the game world and place it! Add Solar Panels next to the Machine Core to power your rig."
-                : (res.message ?? undefined),
+              description,
               className: "bg-black border-primary text-primary font-mono uppercase",
             });
             refetch();  // refresh inventory counts
@@ -202,22 +232,27 @@ export default function Craft() {
             <Cpu className="w-8 h-8 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1.5 text-xs text-muted-foreground leading-relaxed">
               <p className="text-primary font-bold uppercase tracking-widest text-[10px] mb-2">How to Build Your Data Rig</p>
-              {/* Step-by-step build guide */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {/* Step-by-step build guide — 4 steps now that Rig and Machine Core are separate */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
                   <div className="text-2xl">⛏️</div>
                   <div className="text-primary font-bold text-[10px] uppercase">Step 1: Mine</div>
-                  <div className="text-[10px]">Break iron, gold, diamond blocks in the world to collect raw resources</div>
+                  <div className="text-[10px]">Break iron, gold, diamond blocks in the world to gather raw resources</div>
+                </div>
+                <div className="bg-black/40 rounded border border-primary/30 p-2 text-center space-y-1">
+                  <div className="text-2xl">🖥️</div>
+                  <div className="text-primary font-bold text-[10px] uppercase">Step 2: Unlock</div>
+                  <div className="text-[10px]">Craft a <strong>Data Center Rig</strong> (one-time only) to unlock the Miner page</div>
                 </div>
                 <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
                   <div className="text-2xl">⚙️</div>
-                  <div className="text-primary font-bold text-[10px] uppercase">Step 2: Craft</div>
-                  <div className="text-[10px]">Build a Machine Core + Solar Panel Blocks here at the Workbench</div>
+                  <div className="text-primary font-bold text-[10px] uppercase">Step 3: Craft</div>
+                  <div className="text-[10px]">Craft <strong>Machine Core</strong> + Solar Panel Blocks — these are the placeable parts</div>
                 </div>
                 <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
                   <div className="text-2xl">☀️</div>
-                  <div className="text-primary font-bold text-[10px] uppercase">Step 3: Place</div>
-                  <div className="text-[10px]">Put Machine Core in the world, then place Solar Panels touching it to power up!</div>
+                  <div className="text-primary font-bold text-[10px] uppercase">Step 4: Place</div>
+                  <div className="text-[10px]">Drop Machine Core in the world, place Solar Panels touching it to start earning!</div>
                 </div>
               </div>
               {/* Power formula — must match game.ts scanMachineCluster and Miner.tsx MAX_LEVEL */}

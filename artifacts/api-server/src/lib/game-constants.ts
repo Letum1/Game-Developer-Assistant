@@ -219,24 +219,31 @@ export const CRAFTING_RECIPES: Record<string, {
   unlocksMiner?: boolean;
 }> = {
 
-  // ── Data Center Rig (the main passive income device) ─────────────────────
+  // ── Data Center Rig — one-time miner unlock certificate ──────────────────
+  // Crafting this gives you a "Data Center Rig" item that stays in your
+  // inventory forever as proof you have a rig. It also fires the `unlocksMiner`
+  // flag so the server enables passive-income ticking for your account.
+  // It is NOT a placeable block — place Machine Core blocks in the world instead.
   data_center_rig: {
     displayName: "Data Center Rig",
-    description: "Unlocks your passive Data Center Miner. Place machine_core + solar panels in the world to activate.",
+    description: "One-time unlock: assembles your Data Center and activates the passive Miner dashboard. Keep it in your inventory as your rig certificate.",
     ingredients: [
-      { itemId: "raw_iron",    quantity: 5 },
-      { itemId: "raw_gold",    quantity: 3 },
-      { itemId: "raw_diamond", quantity: 1 },
+      { itemId: "raw_iron",    quantity: 8 },
+      { itemId: "raw_gold",    quantity: 5 },
+      { itemId: "raw_diamond", quantity: 2 },
     ],
-    result: "machine_core",  // placing machine_core in-world activates the rig
+    result: "data_center_rig",  // stays in inventory — it is NOT a placeable block
     resultQty: 1,
-    unlocksMiner: true,
+    unlocksMiner: true,         // fires UPDATE miners SET unlocked = true
   },
 
   // ── Machine building blocks ──────────────────────────────────────────────
+  // Machine Core: the placeable CPU block that anchors your rig in the world.
+  // Craft as many as you need — each one placed in the world expands your cluster.
+  // Does NOT unlock the miner on its own; craft the Data Center Rig first.
   machine_core: {
     displayName: "Machine Core",
-    description: "The CPU brain of your Data Rig. Place in the world, then connect Solar Panels to activate it.",
+    description: "The CPU block of your Data Rig. Place it in the world, then connect Solar Panels via Data Cables to start earning.",
     ingredients: [
       { itemId: "raw_iron",    quantity: 5 },
       { itemId: "raw_gold",    quantity: 2 },
@@ -244,7 +251,7 @@ export const CRAFTING_RECIPES: Record<string, {
     ],
     result: "machine_core",
     resultQty: 1,
-    unlocksMiner: true,
+    // No unlocksMiner here — craft the Data Center Rig first to unlock the miner
   },
 
   solar_panel_block: {

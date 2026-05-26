@@ -10,6 +10,7 @@ import { X, Package } from "lucide-react";
 
 // Item display name map for the window (shared subset)
 const DISPLAY_NAMES: Record<string, string> = {
+  data_center_rig:   "DC Rig",      // one-time unlock certificate — stays in inventory
   machine_core:      "M.Core",
   solar_panel_block: "Solar Pnl",
   data_cable:        "Pipe",
@@ -39,6 +40,7 @@ const DISPLAY_NAMES: Record<string, string> = {
 
 // Emoji icons for quick visual recognition
 const ITEM_ICON: Record<string, string> = {
+  data_center_rig:   "🖥",    // Data Center Rig unlock certificate
   machine_core:      "⚙",
   solar_panel_block: "☀",
   data_cable:        "〜",
