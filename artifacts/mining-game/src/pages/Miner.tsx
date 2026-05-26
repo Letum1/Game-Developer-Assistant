@@ -1,37 +1,37 @@
 import { useEffect, useState } from "react";
-import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useUpgradeMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
+// ── Upgrade note: gem-based upgrades were removed. Rig level is now computed
+// automatically by the server (updateMinerFromWorld in game.ts) based on the
+// number of power-source blocks connected to the Machine Core via Data Pipes.
+// Formula: solar_panel = +1, battery_block = +1, generator_block = +2 (cap 9).
+import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, ArrowUpCircle, Hammer, BatteryCharging, Download, TrendingUp } from "lucide-react";
+import { Server, Activity, Thermometer, Cpu, Zap, Snowflake, Hammer, BatteryCharging, Download, TrendingUp, Sun, Fuel } from "lucide-react";
 import { Link } from "wouter";
 
 // ── Fuel constants (must stay in sync with server game-constants.ts) ──────────
 const MAX_FUEL        = 500;
 const FUEL_DRAIN_RATE = 0.05;
 
-// ── Loyalty points required per upgrade tier (mirrors server UPGRADE_POINTS_REQUIRED) ──
-// Must stay in sync with game-constants.ts — only used for progress display.
-const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
-  1: 0, 2: 150, 3: 400, 4: 800, 5: 1400, 6: 2200, 7: 3500, 8: 5200,
-};
-
-// ── Gem cost per upgrade tier (mirrors server MINER_UPGRADE_COSTS) ────────────
-const UPGRADE_GEM_COSTS: Record<number, number> = {
-  1: 50, 2: 150, 3: 320, 4: 600, 5: 1000, 6: 1700, 7: 2800, 8: 4500,
-};
+// ── Power-unit values for each block type (must match game.ts scanMachineCluster) ──
+// Level = total power units of all blocks connected to Machine Core, capped at MAX_LEVEL.
+// solar_panel_block = 1 unit (daytime only)
+// battery_block     = 1 unit (always-on, charged by solar)
+// generator_block   = 2 units (always-on, requires diesel fuel)
+const MAX_LEVEL = 9; // effective speed ceiling (MINER_RATES[9] is the peak rate)
 
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
   const { data: wallet }         = useGetWallet();
-  const minerTick    = useMinerTick();
-  const maintainMiner = useMaintainMiner();
-  const upgradeMiner = useUpgradeMiner();
+  const minerTick           = useMinerTick();
+  const maintainMiner       = useMaintainMiner();
+  // Note: upgradeMiner hook removed — level is driven by world structure, not gem spending.
   const requestMonetization = useRequestMonetizationTask();
-  const verifyMonetization = useVerifyMonetizationTask();
+  const verifyMonetization  = useVerifyMonetizationTask();
   const { toast } = useToast();
 
   const [localBalance, setLocalBalance] = useState<number>(0);
@@ -183,36 +183,19 @@ export default function Miner() {
   const tempColor    = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
 
-  // ── Mining speed display (multiplier vs entry tier, no sat/day shown) ────
+  // ── Mining speed multiplier display (relative to base tier, no raw sat/day shown) ──
   // Shows players the relative rate increase without revealing the platform cap.
-  const BASE_RATE       = 1 / 86400;  // entry-level rate (tier 1)
-  const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 12× at tier 5
+  const BASE_RATE       = 1 / 86400;  // tier-1 reference rate
+  const speedMultiplier = miner.ratePerSecond / BASE_RATE;  // e.g. 5× at level 5
 
-  // ── Upgrade state: gem cost + loyalty points required for next tier ───────
-  const nextCost   = UPGRADE_GEM_COSTS[miner.level] ?? null;
-  const nextPoints = UPGRADE_POINTS_REQUIRED[miner.level] ?? null;
-  const playerPoints = parseFloat((wallet as {windowPoints?: string})?.windowPoints ?? "0") || 0;
-  const pointsReady  = nextPoints === null || playerPoints >= nextPoints;
-  const gemsReady    = nextCost === null || (wallet ? parseInt((wallet as {gems?: string})?.gems ?? "0") >= nextCost : false);
-  const canUpgrade   = nextCost !== null && pointsReady;  // at ceiling when nextCost === null
+  // ── Effective display level — server stores raw power units (can exceed 9) ──
+  // but MINER_RATES caps at index 9. Clamp for UI so players see the ceiling.
+  const displayLevel = Math.min(miner.level, MAX_LEVEL);
 
-  const handleUpgrade = () => {
-    upgradeMiner.mutate(undefined, {
-      onSuccess: () => {
-        toast({
-          title: "RIG ENHANCED",
-          description: "Mining speed increased. Keep building your empire.",
-          className: "bg-black border-primary text-primary font-mono uppercase",
-        });
-        refetch();
-      },
-      onError: (err: unknown) => {
-        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-          ?? "Upgrade failed. Check your gems and activity.";
-        toast({ title: "UPGRADE BLOCKED", description: msg, variant: "destructive" });
-      },
-    });
-  };
+  // ── Progress toward next level expressed as power units already placed ────
+  // Used to drive a progress bar in the structure upgrade panel.
+  // At max level (9) we show 100% to signal peak configuration.
+  const levelProgress = displayLevel >= MAX_LEVEL ? 100 : (displayLevel / MAX_LEVEL) * 100;
 
   // ── Fuel / battery calculations ──────────────────────────────────────────
   // `generators` column tracks total always-on source blocks (battery + generator).
@@ -385,66 +368,91 @@ export default function Miner() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Stats & Upgrade */}
+        {/* ── System Specifications + Structure Upgrade Guide ─────────────── */}
+        {/* Level is auto-computed from the physical blocks in your game world. */}
+        {/* No gems required — just build more power infrastructure in the game. */}
         <Card className="border-border bg-sidebar/50">
           <CardHeader>
             <CardTitle className="text-white uppercase text-sm tracking-widest">System Specifications</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+
+            {/* Current rig tier */}
             <div className="flex justify-between items-center pb-2 border-b border-border">
               <span className="text-muted-foreground uppercase text-xs tracking-widest">Rig Level</span>
-              <Badge variant="outline" className="border-primary text-primary font-bold">LVL {miner.level}</Badge>
+              <Badge variant="outline" className="border-primary text-primary font-bold">
+                LVL {displayLevel} / {MAX_LEVEL}
+              </Badge>
             </div>
+
+            {/* Connected solar panels (daytime power) */}
             <div className="flex justify-between items-center pb-2 border-b border-border">
-              <span className="text-muted-foreground uppercase text-xs tracking-widest">Solar Arrays</span>
-              <span className="text-white font-bold">{miner.solarPanels}</span>
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Sun className="w-3 h-3 text-yellow-400" /> Solar Arrays
+              </span>
+              <span className="text-yellow-400 font-bold">{miner.solarPanels}</span>
             </div>
+
+            {/* Always-on power sources (batteries + generators) */}
             <div className="flex justify-between items-center pb-2 border-b border-border">
-              <span className="text-muted-foreground uppercase text-xs tracking-widest">Generators</span>
-              <span className="text-white font-bold">{miner.generators}</span>
+              <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                <Fuel className="w-3 h-3 text-orange-400" /> Always-On Sources
+              </span>
+              <span className="text-orange-400 font-bold">{miner.generators}</span>
             </div>
-            
-            {canUpgrade ? (
-              <>
-                {/* Loyalty progress bar — shows mining activity requirement */}
-                {nextPoints && nextPoints > 0 && (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs text-muted-foreground uppercase tracking-widest">
-                      <span>Activity Required</span>
-                      <span>{Math.min(Math.floor(playerPoints), nextPoints)}/{nextPoints} pts</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-black/60 border border-border rounded overflow-hidden">
-                      <div
-                        className="h-full bg-primary transition-all"
-                        style={{ width: `${Math.min(100, (playerPoints / nextPoints) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-                <Button
-                  className="w-full bg-primary/20 text-primary border border-primary hover:bg-primary hover:text-black uppercase tracking-widest font-bold mt-2"
-                  onClick={handleUpgrade}
-                  disabled={upgradeMiner.isPending || !pointsReady || !gemsReady}
-                >
-                  <ArrowUpCircle className="w-4 h-4 mr-2" />
-                  {upgradeMiner.isPending ? "ENHANCING..." : `Enhance Rig — ${nextCost} gems`}
-                </Button>
-                {!pointsReady && (
-                  <p className="text-xs text-muted-foreground text-center mt-1 uppercase tracking-widest">
-                    Mine more blocks to unlock this tier
-                  </p>
-                )}
-                {!gemsReady && pointsReady && (
-                  <p className="text-xs text-yellow-500 text-center mt-1 uppercase tracking-widest">
-                    Need {nextCost} gems — you have {(wallet as {gems?: string})?.gems ?? 0}
-                  </p>
-                )}
-              </>
-            ) : (
-              <div className="mt-4 border border-primary/30 rounded p-3 text-center">
+
+            {/* Level progress bar — fills toward MAX_LEVEL based on power units */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[10px] text-muted-foreground uppercase tracking-widest">
+                <span>Power Output</span>
+                <span>{displayLevel} / {MAX_LEVEL} units</span>
+              </div>
+              <div className="w-full h-2 bg-black/60 border border-border rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-700"
+                  style={{ width: `${levelProgress}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Upgrade guide — explains how to increase level without gems */}
+            {displayLevel >= MAX_LEVEL ? (
+              // Peak configuration reached
+              <div className="border border-primary/30 rounded p-3 text-center">
                 <p className="text-primary text-xs uppercase tracking-widest font-bold">
-                  ⚡ Operating at Peak Configuration
+                  ⚡ Peak Configuration — Max Speed Reached
                 </p>
+              </div>
+            ) : (
+              // Show players exactly what blocks to add in-world
+              <div className="border border-primary/15 rounded p-3 space-y-2 bg-primary/5">
+                <p className="text-primary text-[10px] uppercase tracking-widest font-bold">
+                  Increase Level: Add Power Blocks
+                </p>
+                <div className="space-y-1 text-[10px] text-muted-foreground leading-relaxed">
+                  {/* Each row shows the block, its power contribution, and the upgrade hint */}
+                  <div className="flex justify-between">
+                    <span className="flex items-center gap-1"><Sun className="w-3 h-3 text-yellow-400" /> Solar Panel</span>
+                    <span className="text-yellow-400 font-bold">+1 unit</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="flex items-center gap-1"><Zap className="w-3 h-3 text-blue-400" /> Battery Block</span>
+                    <span className="text-blue-400 font-bold">+1 unit</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="flex items-center gap-1"><Fuel className="w-3 h-3 text-orange-400" /> Generator</span>
+                    <span className="text-orange-400 font-bold">+2 units</span>
+                  </div>
+                </div>
+                {/* Link to game world for immediate action */}
+                <Link href="/game">
+                  <Button
+                    size="sm"
+                    className="w-full mt-1 bg-primary/15 text-primary border border-primary/40 hover:bg-primary hover:text-black uppercase tracking-widest font-bold text-[10px]"
+                  >
+                    Build in Game World →
+                  </Button>
+                </Link>
               </div>
             )}
           </CardContent>

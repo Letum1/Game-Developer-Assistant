@@ -1970,6 +1970,10 @@ export default function Game() {
   // ── Water bucket indicator from inventory ────────────────────────────────
   const hasWaterBucket = inventory.some((i) => i.itemId === "water_bucket" && i.quantity > 0);
 
+  // ── Diesel can indicator — enables the direct Refuel button in StructurePopup ──
+  // Checked against live inventory so it updates immediately after a purchase.
+  const hasDieselCan = inventory.some((i) => i.itemId === "diesel_can" && i.quantity > 0);
+
   // Helper: shared style for on-screen control buttons
   const ctrlBtn = "select-none touch-none transition-all active:scale-90";
 
@@ -2373,9 +2377,31 @@ export default function Game() {
       {/* ── FLOATING WINDOWS + STRUCTURE POPUP ──────────────────────────── */}
       {/* Uses fixed positioning so the game's overflow-hidden doesn't clip  */}
       {/* the windows. pointer-events-none on the wrapper, auto on children. */}
+      {/* DOM order determines stacking: backdrop renders FIRST (below),      */}
+      {/* window divs render AFTER (above), so clicks inside a window do NOT  */}
+      {/* reach the backdrop — only true outside-clicks close all panels.     */}
       <div className="fixed inset-0 z-40 pointer-events-none">
 
-        {/* Structure status popup — shown when tapping a machine block */}
+        {/* ── Click-outside backdrop ─────────────────────────────────────── */}
+        {/* Transparent full-screen div that fires when the player taps       */}
+        {/* anywhere outside an open window. Closes every floating panel.     */}
+        {/* Rendered first so window divs (later in DOM) sit on top of it.    */}
+        {(structurePopup || showMinerWin || showInvWin || showStoreWin || showLeadWin) && (
+          <div
+            className="absolute inset-0 pointer-events-auto"
+            onClick={() => {
+              // Dismiss all panels at once
+              setStructurePopup(null);
+              setShowMinerWin(false);
+              setShowInvWin(false);
+              setShowStoreWin(false);
+              setShowLeadWin(false);
+            }}
+          />
+        )}
+
+        {/* ── Structure status popup — shown when tapping a machine block ── */}
+        {/* Rendered AFTER backdrop so it receives clicks before the backdrop */}
         {structurePopup && (
           <div className="absolute top-16 right-2 pointer-events-auto">
             <StructurePopup
@@ -2383,6 +2409,7 @@ export default function Game() {
               bx={structurePopup.bx}
               by={structurePopup.by}
               minerData={minerData as Parameters<typeof StructurePopup>[0]["minerData"]}
+              hasDieselCan={hasDieselCan}
               onClose={() => setStructurePopup(null)}
               onBreak={() => {
                 // Directly break the block (bypass per-hit counter for machines)
@@ -2401,11 +2428,37 @@ export default function Game() {
                   }
                 );
               }}
+              onRefuel={() => {
+                // Consume one diesel_can from inventory and add DIESEL_PER_CAN fuel to the miner.
+                // Server validates the target block is a generator_block before accepting.
+                const { bx, by } = structurePopup;
+                gameAction.mutate(
+                  { data: { actionType: "refuel", worldName: "start", x: bx, y: by } },
+                  {
+                    onSuccess: (data) => {
+                      if ((data as { success?: boolean }).success) {
+                        toast({
+                          title: "⛽ REFUELED",
+                          description: "Diesel can consumed — generator fuel +100.",
+                          className: "bg-black border-yellow-500 text-yellow-400 font-mono uppercase",
+                        });
+                        setStructurePopup(null);
+                      } else {
+                        toast({ title: "REFUEL FAILED", description: (data as { error?: string }).error ?? "Unknown error.", variant: "destructive" });
+                      }
+                      refetchInventory();
+                    },
+                    onError: () => {
+                      toast({ title: "REFUEL FAILED", description: "No diesel can or wrong block.", variant: "destructive" });
+                    },
+                  }
+                );
+              }}
             />
           </div>
         )}
 
-        {/* Miner stats window */}
+        {/* ── Miner stats window ─────────────────────────────────────────── */}
         {showMinerWin && (
           <div className="absolute top-16 right-2 pointer-events-auto">
             <MinerWindow
@@ -2415,7 +2468,7 @@ export default function Game() {
           </div>
         )}
 
-        {/* Inventory window */}
+        {/* ── Inventory window ───────────────────────────────────────────── */}
         {showInvWin && (
           <div className="absolute top-16 right-2 pointer-events-auto">
             <InventoryWindow
@@ -2425,7 +2478,7 @@ export default function Game() {
           </div>
         )}
 
-        {/* Store window */}
+        {/* ── Store window ───────────────────────────────────────────────── */}
         {showStoreWin && (
           <div className="absolute top-16 right-2 pointer-events-auto">
             <StoreWindow
@@ -2436,7 +2489,7 @@ export default function Game() {
           </div>
         )}
 
-        {/* Leaderboard window */}
+        {/* ── Leaderboard window ─────────────────────────────────────────── */}
         {showLeadWin && (
           <div className="absolute top-16 right-2 pointer-events-auto">
             <LeaderboardWindow onClose={() => setShowLeadWin(false)} />

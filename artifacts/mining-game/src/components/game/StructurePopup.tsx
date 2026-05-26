@@ -7,14 +7,16 @@
 // without requiring navigation away from the game canvas.
 //
 // Props:
-//   blockType  — the block that was clicked (e.g. "machine_core")
-//   bx / by    — world grid coordinates of the block
-//   minerData  — live miner state from useGetMiner()
-//   onClose    — dismiss the popup
-//   onBreak    — programmatically send the break action for this block
+//   blockType    — the block that was clicked (e.g. "machine_core")
+//   bx / by      — world grid coordinates of the block
+//   minerData    — live miner state from useGetMiner()
+//   onClose      — dismiss the popup
+//   onBreak      — programmatically send the break action for this block
+//   onRefuel     — (optional) called when player clicks Refuel button
+//   hasDieselCan — (optional) true if player has a diesel_can in inventory
 // ============================================================
 
-import { X, Cpu, Thermometer, Zap, Fuel, Battery, Sun, Cable, Lightbulb } from "lucide-react";
+import { X, Cpu, Thermometer, Fuel, Battery, Sun, Cable, Lightbulb } from "lucide-react";
 
 // Live miner state shape (subset of what the API returns)
 type MinerData = {
@@ -29,12 +31,16 @@ type MinerData = {
 };
 
 type StructurePopupProps = {
-  blockType:  string;
-  bx:         number;
-  by:         number;
-  minerData:  MinerData | null | undefined;
-  onClose:    () => void;
-  onBreak:    () => void;
+  blockType:    string;
+  bx:           number;
+  by:           number;
+  minerData:    MinerData | null | undefined;
+  onClose:      () => void;
+  onBreak:      () => void;
+  // Optional refuel action — triggered by the Refuel button on generator/battery blocks.
+  // Game.tsx passes this when it detects the clicked block is a generator_block or battery_block.
+  onRefuel?:    () => void;
+  hasDieselCan?: boolean; // true when player has ≥1 diesel_can in inventory
 };
 
 // Human-readable block display names
@@ -47,7 +53,7 @@ const BLOCK_FRIENDLY: Record<string, string> = {
   generator_block:   "Diesel Generator",
 };
 
-export default function StructurePopup({ blockType, bx, by, minerData, onClose, onBreak }: StructurePopupProps) {
+export default function StructurePopup({ blockType, bx, by, minerData, onClose, onBreak, onRefuel, hasDieselCan }: StructurePopupProps) {
   const name    = BLOCK_FRIENDLY[blockType] ?? blockType;
   const temp    = minerData?.temperature ?? 0;
   const tempColor =
@@ -88,8 +94,11 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
       <div className="px-3 pb-2 space-y-1.5">
 
         {/* ── machine_core: full rig stats ─────────────────────── */}
+        {/* Level is automatically computed from connected power blocks:  */}
+        {/* solar_panel=1pt, battery=1pt, generator=2pts; cap at 9.       */}
         {blockType === "machine_core" && minerData && (
           <>
+            {/* Running status indicator */}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Status</span>
               <span className={`font-bold ${minerData.isRunning ? "text-primary" : "text-red-400"}`}>
@@ -97,11 +106,13 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               </span>
             </div>
 
+            {/* Rig tier — driven by total connected power units in the world */}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">Tier</span>
-              <span className="text-white font-bold">Level {minerData.level}</span>
+              <span className="text-white font-bold">Level {Math.min(minerData.level, 9)}</span>
             </div>
 
+            {/* Core temperature with colour gradient: green → yellow → red */}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground flex items-center gap-1">
                 <Thermometer className="w-3 h-3" /> Temp
@@ -112,15 +123,7 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               </span>
             </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground flex items-center gap-1">
-                <Zap className="w-3 h-3" /> Rate
-              </span>
-              <span className="text-accent font-bold">
-                {(minerData.ratePerSecond * 86400).toFixed(4)} sat/d
-              </span>
-            </div>
-
+            {/* Connected solar panel count (daytime-only power) */}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground flex items-center gap-1">
                 <Sun className="w-3 h-3 text-yellow-400" /> Panels
@@ -128,23 +131,32 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               <span className="text-yellow-400 font-bold">{minerData.solarPanels}</span>
             </div>
 
+            {/* Always-on power sources (batteries + generators combined) */}
             <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">Generators</span>
+              <span className="text-muted-foreground">Always-On</span>
               <span className="text-orange-400 font-bold">{minerData.generators}</span>
             </div>
 
-            {/* Temperature tip */}
+            {/* Overheating warning — guide player to cool down */}
             {temp >= 80 && (
               <div className="mt-1 text-[9px] text-red-400/80 border border-red-500/20 rounded px-2 py-1 bg-red-950/30 leading-relaxed">
                 ⚠ Overheating — apply Thermal Paste or Water Bucket to cool down.
               </div>
             )}
+
+            {/* Structure upgrade hint — place more power blocks to raise level */}
+            <div className="mt-1 text-[9px] text-primary/60 border border-primary/15 rounded px-2 py-1 bg-primary/5 leading-relaxed">
+              ⚡ Level up by connecting more Solar Panels, Batteries, or Generators via Pipes. Max level: 9.
+            </div>
           </>
         )}
 
-        {/* ── generator_block / battery_block: fuel gauge ────────── */}
+        {/* ── generator_block / battery_block: fuel gauge + direct refuel ── */}
+        {/* Fuel is a shared pool (0–500) drained by all always-on sources.  */}
+        {/* onRefuel fires the "refuel" game action using the diesel_can item. */}
         {(blockType === "generator_block" || blockType === "battery_block") && (
           <>
+            {/* Fuel level readout — blinks red when critically low */}
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground flex items-center gap-1">
                 {blockType === "generator_block"
@@ -159,7 +171,7 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               </span>
             </div>
 
-            {/* Fuel bar */}
+            {/* Fuel bar — colour transitions: yellow → orange → red as fuel depletes */}
             <div className="w-full h-2 bg-black/60 rounded-full border border-border overflow-hidden">
               <div
                 className="h-full rounded-full transition-all"
@@ -167,11 +179,29 @@ export default function StructurePopup({ blockType, bx, by, minerData, onClose, 
               />
             </div>
 
-            <div className="text-[9px] text-muted-foreground leading-relaxed">
-              {blockType === "generator_block"
-                ? "Select Diesel Can from hotbar, then tap this generator to refuel."
-                : "Charges from solar panels during the day."}
-            </div>
+            {/* Direct refuel button — only shown for generators, only when onRefuel is provided */}
+            {/* hasDieselCan=false greys it out and explains the situation inline */}
+            {blockType === "generator_block" && onRefuel && (
+              <button
+                onClick={onRefuel}
+                disabled={!hasDieselCan}
+                className={`w-full mt-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded border text-[10px] font-bold uppercase tracking-wider transition-all ${
+                  hasDieselCan
+                    ? "border-yellow-500/60 text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20 cursor-pointer"
+                    : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
+                }`}
+              >
+                <Fuel className="w-3 h-3" />
+                {hasDieselCan ? "⛽ Refuel (+100 units)" : "No Diesel Can in inventory"}
+              </button>
+            )}
+
+            {/* Battery hint — batteries charge from solar, no diesel needed */}
+            {blockType === "battery_block" && (
+              <div className="text-[9px] text-muted-foreground leading-relaxed">
+                Charges from solar panels during the day. Use Diesel Can on a Generator to add fuel.
+              </div>
+            )}
           </>
         )}
 
