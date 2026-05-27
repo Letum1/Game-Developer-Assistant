@@ -119,7 +119,7 @@ router.post("/miner/tick", async (req, res) => {
     // A rig with ONLY solar panels goes offline at night — no stored energy.
     const dayFactor    = getDayFactor(Date.now());
     const solarActive  = solarPanels > 0 && dayFactor > 0.15; // sun is up enough
-    const alwaysOn     = generators > 0;                       // battery / generator
+    const alwaysOn     = generators > 0 && fuel > 0;          // battery/generator needs stored energy
     const hasPower     = solarActive || alwaysOn;
 
     // Active rigs = min(rigCount, power supply). Power supply = powered solar + always-on.

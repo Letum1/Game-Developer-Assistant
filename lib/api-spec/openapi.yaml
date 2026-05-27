@@ -462,7 +462,7 @@ components:
       properties:
         actionType:
           type: string
-          enum: [break, place]
+          enum: [break, place, refuel, plant, grow, maintain, water]
         worldName:
           type: string
         x:

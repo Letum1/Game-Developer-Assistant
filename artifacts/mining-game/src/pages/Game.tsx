@@ -1227,7 +1227,7 @@ export default function Game() {
     // We treat every lamp_block as always-lit here (power state depends on
     // dayFactor which changes per-frame; the darkness overlay still dims the
     // area at night, but block-level blackness is pre-reduced near lamps).
-    const LAMP_REACH = 7; // illumination radius in blocks
+    const LAMP_REACH = 14; // illumination radius in blocks
     for (let gy = 0; gy < h; gy++) {
       for (let gx = 0; gx < w; gx++) {
         if (bd[gy][gx] !== "lamp_block") continue;
@@ -1726,28 +1726,28 @@ export default function Game() {
           // it actually illuminates the scene after the night overlay is applied.
           const nightBoost = Math.max(0.05, 1 - dayFactor);
 
-          // Lamp halo radius reduced from BS*8 → BS*5 so it's not overpowering;
-          // illumination of nearby blocks is handled by the light map lamp pass.
-          const r     = isLantern ? BS * 5.5 : BS * 5;
+          // Lamp halo radius: BS*10 for lamp, BS*6 for lantern.
+          // Light map (LAMP_REACH=14) handles per-block brightness;
+          // halo gives the warm visible glow that extends well beyond the source.
+          const r     = isLantern ? BS * 6 : BS * 10;
           const pulse = isLantern
             ? 0.70 + 0.30 * Math.sin(now / 120 + gx * 1.7)  // flicker like a flame
-            : 0.75 + 0.25 * Math.sin(now / 300);             // gentle breath for lamp
+            : 0.80 + 0.20 * Math.sin(now / 300);             // gentle breath for lamp
 
-          // Alpha values reduced — lamp is warm but not blinding
           const innerColor = isLantern
             ? `rgba(255,160,30,${0.70 * pulse * nightBoost})`
-            : `rgba(255,210,90,${0.60 * pulse * nightBoost})`;
+            : `rgba(255,215,100,${0.65 * pulse * nightBoost})`;
           const midColor   = isLantern
             ? `rgba(255,100,15,${0.40 * pulse * nightBoost})`
-            : `rgba(255,170,50,${0.35 * pulse * nightBoost})`;
+            : `rgba(255,175,55,${0.40 * pulse * nightBoost})`;
           const outerColor = isLantern
             ? `rgba(255,60,0,${0.10 * pulse * nightBoost})`
-            : `rgba(255,140,20,${0.12 * pulse * nightBoost})`;
+            : `rgba(255,140,20,${0.18 * pulse * nightBoost})`;
 
           const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
           grad.addColorStop(0,    innerColor);
-          grad.addColorStop(0.25, midColor);
-          grad.addColorStop(0.6,  outerColor);
+          grad.addColorStop(0.20, midColor);
+          grad.addColorStop(0.55, outerColor);
           grad.addColorStop(1,    "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
           ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
@@ -1964,7 +1964,7 @@ export default function Game() {
         return;
       }
       gameAction.mutate(
-        { data: { actionType: "refuel", worldName: "start", x: bx, y: by } as Parameters<typeof gameAction.mutate>[0]["data"] },
+        { data: { actionType: "refuel", worldName: "start", x: bx, y: by } },
         {
           onSuccess: (data) => {
             if ((data as { success?: boolean }).success) {

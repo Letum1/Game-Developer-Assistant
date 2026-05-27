@@ -36,6 +36,11 @@ export type GameActionInputActionType = typeof GameActionInputActionType[keyof t
 export const GameActionInputActionType = {
   break: 'break',
   place: 'place',
+  refuel: 'refuel',
+  plant: 'plant',
+  grow: 'grow',
+  maintain: 'maintain',
+  water: 'water',
 } as const;
 
 export interface GameActionInput {

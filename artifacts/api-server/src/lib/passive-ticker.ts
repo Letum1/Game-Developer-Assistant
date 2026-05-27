@@ -73,7 +73,7 @@ async function tickMiner(userId: number): Promise<boolean> {
     // Determine power availability at the time of the tick
     const dayFactor   = getDayFactor(now.getTime());
     const solarActive = solarPanels > 0 && dayFactor > 0.15;
-    const alwaysOn    = generators > 0;
+    const alwaysOn    = generators > 0 && fuel > 0;  // battery/generator needs stored energy
     const hasPower    = solarActive || alwaysOn;
 
     // Active rigs = powered rigs only — excess rigs beyond supply are idle.
