@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 // active_rigs = min(total_mining_rigs, power_supply). Rate scales with active_rigs.
 // Fan blocks reduce temperature rise — 4 fans = no overheating at base load.
 import { useGetMiner, useGetWallet, useMinerTick, useMaintainMiner, useRequestMonetizationTask, useVerifyMonetizationTask } from "@workspace/api-client-react";
+import { useBtcPrice } from "@/hooks/use-btc-price";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,9 @@ const MAX_LEVEL = 9; // effective speed ceiling (MINER_RATES[9] is the peak rate
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
   const { data: wallet }         = useGetWallet();
+  // BTC price used to convert internal sats balance → USD for display.
+  // The player sees dollars going up — conversion to sats happens on the Wallet page.
+  const btcPrice = useBtcPrice();
   const minerTick           = useMinerTick();
   const maintainMiner       = useMaintainMiner();
   // Note: upgradeMiner hook removed — level is driven by world structure, not gem spending.
@@ -35,8 +39,8 @@ export default function Miner() {
   const verifyMonetization  = useVerifyMonetizationTask();
   const { toast } = useToast();
 
-  // localBalance is in satoshis and ticks locally every 100ms for visual dopamine.
-  // Synced with server every 30s via minerTick. Displayed directly in sats.
+  // localBalance is stored internally in satoshis and ticks every 100ms.
+  // It is displayed as USD so players see dollars going up. Conversion is on the Wallet page.
   const [localBalance, setLocalBalance] = useState<number>(0);
   const [adTimer, setAdTimer] = useState<number | null>(null);
   const [adToken, setAdToken] = useState<string | null>(null);
@@ -106,12 +110,13 @@ export default function Miner() {
       });
       const data = await res.json();
       if (data.success) {
-        // Convert collected satoshis to USD using live price; fallback to sat display if unavailable
         const collectedSats = data.collected ?? 0;
-        const collectedDisplay = `${collectedSats.toFixed(4)} sat`;
+        const collectedUsd = btcPrice
+          ? `$${((collectedSats / 100_000_000) * btcPrice).toFixed(6)}`
+          : `$0.000000`;
         toast({
           title: "BALANCE COLLECTED",
-          description: `${collectedDisplay} moved to your wallet.`,
+          description: `${collectedUsd} moved to your wallet.`,
           className: "bg-black border-primary text-primary font-mono uppercase",
         });
         setLocalBalance(0);  // reset local display
@@ -189,8 +194,26 @@ export default function Miner() {
   const tempColor    = miner.temperature < 60 ? "text-primary" : miner.temperature < 80 ? "text-yellow-500" : "text-destructive";
   const isOverheated = miner.temperature >= 100;
 
-  // ── Daily yield in sats ───────────────────────────────────────────────────
-  const dailySats = (miner.ratePerSecond ?? 0) * 86400;
+  // ── USD conversion helpers ────────────────────────────────────────────────
+  // localBalance is kept in sats internally; displayed as USD so the counter
+  // looks like real money growing. Players convert on the Wallet page.
+  const satsToUsd = (sats: number): string => {
+    if (!btcPrice) return "$0.000000";
+    const usd = (sats / 100_000_000) * btcPrice;
+    if (usd >= 1)      return `$${usd.toFixed(4)}`;
+    if (usd >= 0.0001) return `$${usd.toFixed(6)}`;
+    return `$${usd.toFixed(8)}`;
+  };
+
+  // Rate per second in USD — shown to player without mentioning sats
+  const usdPerSec = btcPrice
+    ? ((miner.ratePerSecond ?? 0) / 100_000_000) * btcPrice
+    : 0;
+  const usdPerSecStr = usdPerSec < 0.000001
+    ? `$${usdPerSec.toFixed(10)}`
+    : usdPerSec < 0.001
+    ? `$${usdPerSec.toFixed(8)}`
+    : `$${usdPerSec.toFixed(6)}`;
 
   // ── Rig / power stats — the server adds these extra fields to the response ──
   // Access via `as any` since the OpenAPI type doesn't include them yet.
@@ -295,15 +318,15 @@ export default function Miner() {
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
-            {/* ── Live balance counter — ticks locally every 100ms ─────────────── */}
+            {/* ── Live balance counter — ticks locally every 100ms, shown in USD ── */}
             <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
-              {localBalance.toFixed(4)} <span className="text-2xl md:text-3xl text-primary/70">sat</span>
+              {satsToUsd(localBalance)}
             </div>
 
-            {/* ── Daily yield in sats ──────────────────────────────────────────── */}
+            {/* ── Rate per second in USD ───────────────────────────────────────── */}
             <div className="flex items-center gap-2 text-muted-foreground text-sm uppercase tracking-widest">
               <TrendingUp className="w-4 h-4 text-primary" />
-              <span className="text-primary font-bold">+{dailySats.toFixed(4)} sat</span> / day
+              <span className="text-primary font-bold">+{usdPerSecStr}</span> / sec
               {activeRigs > 0 && (
                 <span className="text-xs text-muted-foreground">({activeRigs} rig{activeRigs !== 1 ? "s" : ""} active)</span>
               )}
