@@ -90,12 +90,13 @@ Key sections (in order):
 5. **Solar network BFS** — `isSolarPanelExposed`, `isSolarPanelWired`, `isCoreConnectedToPower` — determines whether machine blocks are powered
 6. **Light map** — `buildLightMap(bd)` computes per-block sunlight exposure (0.0–1.0) via flood fill
 7. **React component** — `Game()` with:
-   - Refs: `canvasRef`, `physRef` (player physics), `worldRef`, `camRef`, `zoomRef`, `rafRef`, `breakingRef`, `flashRef`, `waterSplashRef`, `lightMapRef`, `starsRef`
-   - State: `mode` (punch/place), `selectedBlock`, `wizard`, `chatOpen`, `isDay` (solar badge, 3s poll)
-   - **`drawFrame`** — `useCallback` rAF loop: clear → sky → stars → sun/moon → camera transform → blocks → player → lamp halos → restore → night overlay → scanlines
+   - Refs: `canvasRef`, `physRef` (player physics), `worldRef`, `camRef`, `zoomRef`, `rafRef`, `breakingRef`, `flashRef`, `waterSplashRef`, `lightMapRef`, `starsRef`, `minimapRef`, `minimapFrameRef`
+   - State: `mode` (punch/place), `selectedBlock`, `wizard`, `chatOpen`, `isDay` (solar badge, 3s poll), `showMinimap` (minimap toggle)
+   - **`drawFrame`** — `useCallback` rAF loop: clear → sky → stars → sun/moon → camera transform → blocks → player → lamp halos → restore → night overlay → scanlines → minimap update (every 3rd frame)
    - Physics: gravity, velocity, collision detection against solid blocks, camera follow
    - Joystick: pointer capture on a 90×90 div overlay; horizontal = move, drag up 40% = jump
    - Canvas click: normalizes coords via `getBoundingClientRect` → world coords → mine/place/water-bucket
+   - **Minimap** — bottom-right overlay `<canvas>` sized 1px per block (CSS scaled to 160×80 with `image-rendering: pixelated`). Updated at ~20fps (every 3 rAF frames) using `ImageData` for fast pixel writes. Shows ore/block colors, white viewport rectangle, white player dot, ore color legend. Toggle with MAP button.
 
 ## API Routes Reference
 

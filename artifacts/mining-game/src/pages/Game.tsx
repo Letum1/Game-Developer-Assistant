@@ -1160,6 +1160,16 @@ export default function Game() {
     }))
   );
 
+  // ── Minimap refs and toggle state ────────────────────────────────────────
+  // minimapRef      — the small overlay <canvas> drawn into each rAF tick
+  // minimapFrameRef — frame counter; minimap is only redrawn every 3 frames
+  //                   (20fps update rate) to save GPU/CPU on low-end devices
+  const minimapRef       = useRef<HTMLCanvasElement>(null);
+  const minimapFrameRef  = useRef(0);
+  // showMinimap: toggled by the MAP button in the HUD; persists in state so
+  // players can hide it if it covers important screen real-estate on mobile.
+  const [showMinimap, setShowMinimap] = useState(true);
+
   // ════════════════════════════════════════════════════════════════════════
   // Effect: keep isDay in sync with the live getSky calculation.
   // Polling every 3 seconds is more than frequent enough for a 15-min cycle.
@@ -1771,6 +1781,93 @@ export default function Game() {
       ctx.fillRect(0, scanY, WW, 2);
     }
 
+    // ── MINIMAP — redrawn every 3 frames (~20fps) to keep CPU cost low ────
+    // Each block in the world grid is mapped to a single pixel on an internal
+    // canvas that matches the world dimensions. CSS then scales it up to 160×80
+    // with pixelated rendering. The viewport rectangle and player dot are drawn
+    // on top of the pixel image each update.
+    minimapFrameRef.current = (minimapFrameRef.current + 1) % 3;
+    if (minimapFrameRef.current === 0) {
+      const mmCanvas = minimapRef.current;
+      if (mmCanvas && bd) {
+        const mmCtx = mmCanvas.getContext("2d");
+        if (mmCtx) {
+          const rows = bd.length;
+          const cols = bd[0]?.length ?? 0;
+
+          // Resize internal canvas to match world size — happens on world expand
+          if (mmCanvas.width !== cols || mmCanvas.height !== rows) {
+            mmCanvas.width  = cols;
+            mmCanvas.height = rows;
+          }
+
+          // ── Block type → minimap RGB color ────────────────────────────────
+          // Colors mirror the main BLOCK_COLORS palette so the minimap palette
+          // feels intuitive to players who know the world renderer.
+          const MM_COLORS: Record<string, [number, number, number]> = {
+            block_grass:       [ 21, 128,  61],  // dark green surface
+            block_dirt:        [120,  53,  15],  // earthy brown
+            block_rock:        [ 55,  65,  81],  // dark slate gray
+            block_iron:        [107, 114, 128],  // steel gray ore
+            block_gold:        [180, 130,   9],  // warm gold ore
+            block_diamond:     [ 14, 116, 144],  // cyan diamond ore
+            block_lava:        [185,  28,  28],  // bright red hazard
+            block_oak_log:     [ 22, 101,  52],  // forest green tree trunk
+            block_oak_sapling: [ 34, 197,  94],  // bright green sapling
+            // Machine blocks glow bright so players can spot their rig at a glance
+            machine_core:      [ 34, 197,  94],  // bright green — CPU block
+            mining_rig:        [ 74, 222, 128],  // lighter green — ASIC hardware
+            solar_panel_block: [234, 179,   8],  // yellow — solar power source
+            data_cable:        [ 52, 211, 153],  // teal — data/power pipe
+            lamp_block:        [245, 158,  11],  // amber — underground light
+            battery_block:     [134, 239, 172],  // pale green — energy storage
+            generator_block:   [249, 115,  22],  // orange — diesel generator
+            fan_block:         [ 34, 211, 238],  // cyan — cooling fan
+          };
+
+          // Draw each block as 1 pixel using ImageData (fastest method — no
+          // per-call canvas API overhead, single putImageData flush at the end)
+          const imgData = mmCtx.createImageData(cols, rows);
+          const data    = imgData.data;
+
+          for (let gy = 0; gy < rows; gy++) {
+            for (let gx = 0; gx < cols; gx++) {
+              const blk = bd[gy][gx];
+              // Air above surface = sky blue; air underground = dark void
+              let r = 8, g = 10, b = 28;
+              if (blk !== "air") {
+                const c = MM_COLORS[blk];
+                if (c) { r = c[0]; g = c[1]; b = c[2]; }
+                else   { r = 80;   g = 80;   b = 90; }  // unknown — dim gray
+              }
+              const idx   = (gy * cols + gx) * 4;
+              data[idx]   = r;
+              data[idx+1] = g;
+              data[idx+2] = b;
+              data[idx+3] = 255;
+            }
+          }
+          mmCtx.putImageData(imgData, 0, 0);
+
+          // ── Viewport rectangle — white outline of what the camera sees ────
+          // camRef.current was updated this frame (line ~1420) so it is current.
+          const vx = camRef.current.x / BS;
+          const vy = camRef.current.y / BS;
+          const vw = (WW / zoom)       / BS;
+          const vh = (WH / zoom)       / BS;
+          mmCtx.strokeStyle = "rgba(255,255,255,0.80)";
+          mmCtx.lineWidth   = 0.5;
+          mmCtx.strokeRect(vx, vy, vw, vh);
+
+          // ── Player dot — 2×2 white square at the player's grid position ───
+          const ppx = physRef.current.px / BS;
+          const ppy = physRef.current.py / BS;
+          mmCtx.fillStyle = "#ffffff";
+          mmCtx.fillRect(ppx - 0.5, ppy - 0.5, 2, 2);
+        }
+      }
+    }
+
     // Schedule next frame
     rafRef.current = requestAnimationFrame(drawFrame);
   }, [solid, mode, selectedBlock]);
@@ -2360,6 +2457,83 @@ export default function Game() {
               : "border-zinc-600 text-zinc-400 bg-black/70"
           }`}>
             {isDay ? "☀ SOLAR ACTIVE" : "🌙 NIGHT — no solar"}
+          </div>
+
+          {/* ── MINIMAP OVERLAY — bottom-right corner ────────────────────── */}
+          {/* The internal canvas is 1px per block; CSS scales it up to      */}
+          {/* 160×80 with pixelated rendering so each pixel stays crisp.     */}
+          {/* drawFrame redraws it every 3 frames (~20fps). Toggle with MAP. */}
+          <div className="absolute bottom-4 right-3 z-20 flex flex-col items-end gap-1">
+            {/* MAP toggle button — sits above the minimap */}
+            <button
+              onClick={() => setShowMinimap((v) => !v)}
+              className="font-mono text-[8px] px-1.5 py-0.5 rounded border border-primary/40 text-primary/70 bg-black/70 hover:bg-primary/10 leading-none tracking-widest"
+              title="Toggle minimap"
+            >
+              {showMinimap ? "MAP ▾" : "MAP ▸"}
+            </button>
+
+            {showMinimap && (
+              /* Dark framed panel wrapping the canvas + legend */
+              <div
+                style={{
+                  background:   "rgba(0,0,0,0.78)",
+                  border:       "1px solid rgba(34,197,94,0.40)",
+                  borderRadius:  4,
+                  padding:       3,
+                  boxShadow:    "0 0 10px rgba(34,197,94,0.15)",
+                  lineHeight:    0,
+                }}
+              >
+                {/* "MAP" label at the top */}
+                <div style={{
+                  fontFamily:    "monospace",
+                  fontSize:       7,
+                  color:         "rgba(34,197,94,0.65)",
+                  textAlign:     "center",
+                  letterSpacing:  2,
+                  lineHeight:    "1.4",
+                  marginBottom:   2,
+                }}>
+                  MAP
+                </div>
+
+                {/* The minimap canvas — internal size matches the world (1px/block);  */}
+                {/* CSS width/height scale it up; imageRendering keeps pixels sharp.    */}
+                <canvas
+                  ref={minimapRef}
+                  style={{
+                    display:        "block",
+                    width:           160,
+                    height:           80,
+                    imageRendering: "pixelated",
+                  }}
+                />
+
+                {/* ── Ore legend — 4 key colors so new players can decode the map ── */}
+                <div style={{
+                  display:        "flex",
+                  gap:             5,
+                  marginTop:       3,
+                  justifyContent: "center",
+                  lineHeight:     "1",
+                }}>
+                  {([
+                    { color: "#b48209", label: "Gold"  },
+                    { color: "#0e7490", label: "Dia"   },
+                    { color: "#b91c1c", label: "Lava"  },
+                    { color: "#22c55e", label: "Rig"   },
+                  ] as { color: string; label: string }[]).map(({ color, label }) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                      <div style={{ width: 6, height: 6, background: color, borderRadius: 1, flexShrink: 0 }} />
+                      <span style={{ fontFamily: "monospace", fontSize: 7, color: "rgba(200,200,200,0.65)" }}>
+                        {label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
