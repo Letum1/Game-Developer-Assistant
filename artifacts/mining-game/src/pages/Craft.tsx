@@ -15,7 +15,7 @@
 //   Level = total power units connected to Machine Core, cap = 9
 // ============================================================
 
-import { useCraftItem, useGetInventory } from "@workspace/api-client-react";
+import { useCraftItem, useGetInventory, useGetMiner } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -174,6 +174,19 @@ const RECIPES = [
     ],
     emoji: "🧪",
   },
+  // ── Platform Block — one-way jump-through platform ─────────────────────────
+  // Cheap early-game utility block: crafted from oak wood (cut trees to get it).
+  // Players land on top but jump straight through from below — like Terraria.
+  {
+    recipe: "platform_block",
+    displayName: "Platform Block",
+    description: "Jump-through platform. Land on top, jump through from below. Great for multi-level bases. Crafts 2.",
+    ingredients: [
+      { itemId: "oak_wood", quantity: 3, label: "Oak Wood" },
+    ],
+    emoji: "🪵",
+    hint: "Cut oak trees to get oak_wood, then craft platforms for your base",
+  },
 ] as const;
 
 type Recipe = (typeof RECIPES)[number];
@@ -191,6 +204,8 @@ export default function Craft() {
   const { data: inventory = [], refetch } = useGetInventory();
   const craftItem = useCraftItem();
   const { toast } = useToast();
+  // Miner data — used to lock the data_center_rig recipe once already unlocked
+  const { data: minerData } = useGetMiner({ query: { enabled: true } });
 
   // Helper: returns the player's current quantity of an item
   const qty = (itemId: string) => inventory.find((i) => i.itemId === itemId)?.quantity ?? 0;
@@ -332,15 +347,20 @@ export default function Craft() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {machineRecipes.map((r) => {
-            const craftable = canCraft(r);
+            const isOneTimeUnlock = "unlock" in r && r.unlock;
+            // Data Center Rig is a one-time craft: once miner.unlocked = true, disable recrafting
+            const alreadyUnlocked = isOneTimeUnlock && !!minerData?.unlocked;
+            const craftable = canCraft(r) && !alreadyUnlocked;
             const inInventory = qty(r.recipe);
             return (
               <Card
                 key={r.recipe}
                 className={`border transition-all ${
-                  "key" in r && r.key
-                    ? "border-primary/60 shadow-[0_0_20px_rgba(34,197,94,0.08)]"
-                    : "border-primary/20"
+                  alreadyUnlocked
+                    ? "border-green-800/40 opacity-70"
+                    : "key" in r && r.key
+                      ? "border-primary/60 shadow-[0_0_20px_rgba(34,197,94,0.08)]"
+                      : "border-primary/20"
                 } bg-black/80`}
               >
                 <CardHeader className="pb-2">
@@ -388,20 +408,28 @@ export default function Craft() {
                       );
                     })}
                   </div>
-                  <Button
-                    onClick={() => handleCraft(r)}
-                    disabled={!craftable || craftItem.isPending}
-                    className={`w-full uppercase tracking-widest font-bold text-xs h-9 ${
-                      craftable
-                        ? "bg-primary/10 border border-primary text-primary hover:bg-primary hover:text-black"
-                        : "bg-transparent border border-border/40 text-muted-foreground/40 cursor-not-allowed"
-                    }`}
-                    variant="outline"
-                  >
-                    <Hammer className="w-3.5 h-3.5 mr-2" />
-                    {craftItem.isPending ? "Crafting..." : "Craft"}
-                    {craftable && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
-                  </Button>
+                  {/* One-time craft lock: show "Already Unlocked" badge for data_center_rig */}
+                  {alreadyUnlocked ? (
+                    <div className="w-full h-9 flex items-center justify-center rounded border border-green-700/50 bg-green-900/20 text-green-500 text-xs font-bold uppercase tracking-widest gap-2">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Already Unlocked — Miner Active!
+                    </div>
+                  ) : (
+                    <Button
+                      onClick={() => handleCraft(r)}
+                      disabled={!craftable || craftItem.isPending}
+                      className={`w-full uppercase tracking-widest font-bold text-xs h-9 ${
+                        craftable
+                          ? "bg-primary/10 border border-primary text-primary hover:bg-primary hover:text-black"
+                          : "bg-transparent border border-border/40 text-muted-foreground/40 cursor-not-allowed"
+                      }`}
+                      variant="outline"
+                    >
+                      <Hammer className="w-3.5 h-3.5 mr-2" />
+                      {craftItem.isPending ? "Crafting..." : "Craft"}
+                      {craftable && <ChevronRight className="w-3.5 h-3.5 ml-auto" />}
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             );

@@ -60,6 +60,12 @@ const BLOCK_HITS: Record<string, number> = {
   block_gold:        3,   // Gold ore — medium (valuable, slightly easier)
   block_diamond:     5,   // Diamond — hardest ore
   block_lava:        4,   // Lava — dangerous, hard
+  // Oak tree blocks — break quickly (Growtopia-style fast wood harvesting)
+  block_oak_log:     1,   // Trunk — one punch; drops oak_wood + maybe a seed
+  block_oak_sapling: 1,   // Young tree — breaks in one punch
+  block_oak_leaf:    1,   // Leaf cluster — one punch, no drops
+  // Platform — crafted from oak wood; one-way collision (solid from above)
+  platform_block:    2,   // Medium hardness; returns itself on break
   machine_core:      1,   // Machine component — 1-shot so you can rearrange
   mining_rig:        1,   // ASIC hardware — 1-shot so rig arrays are rearrangeable
   fan_block:         1,   // Cooling fan — 1-shot to reposition
@@ -79,6 +85,12 @@ const BLOCK_COLORS: Record<string, string> = {
   block_gold:        "#b45309",
   block_diamond:     "#0e7490",
   block_lava:        "#b91c1c",
+  // Oak tree
+  block_oak_log:     "#92400e",   // dark brown trunk
+  block_oak_sapling: "#166534",   // dark forest-green young sprout
+  block_oak_leaf:    "#15803d",   // medium green leaf cluster (same as grass)
+  // One-way platform
+  platform_block:    "#5c3d1e",   // wooden plank brown
   machine_core:      "#0a1628",   // dark navy — circuit board feel
   mining_rig:        "#111822",   // very dark blue-gray — ASIC server chassis
   fan_block:         "#101820",   // very dark teal-black — fan housing
@@ -98,6 +110,12 @@ const BLOCK_TINTS: Record<string, string> = {
   block_gold:        "rgba(255,220,50,0.35)",
   block_diamond:     "rgba(100,240,255,0.30)",
   block_lava:        "rgba(255,120,0,0.40)",
+  // Oak tree
+  block_oak_log:     "rgba(180,120,50,0.25)",   // warm wood highlight
+  block_oak_sapling: "rgba(100,220,100,0.45)",   // bright green sprout
+  block_oak_leaf:    "rgba(74,222,128,0.35)",    // leafy green shimmer
+  // One-way platform — warm plank feel
+  platform_block:    "rgba(200,150,80,0.35)",
   machine_core:      "rgba(34,197,94,0.15)",   // faint green circuit glow
   mining_rig:        "rgba(34,197,94,0.20)",   // green LED array — active compute
   fan_block:         "rgba(0,180,255,0.25)",   // cyan — spinning blades
@@ -113,6 +131,13 @@ const BLOCK_LABELS: Record<string, string> = {
   block_grass:       "Grass",
   block_dirt:        "Dirt",
   block_rock:        "Rock",
+  // Oak tree blocks
+  block_oak_log:     "Oak Log",
+  block_oak_sapling: "Sapling",
+  block_oak_leaf:    "Leaves",
+  // One-way platform
+  platform_block:    "Platform",
+  seed_oak:          "Oak Seed",   // shown in hotbar when seed selected for planting
   machine_core:      "M.Core",
   mining_rig:        "Rig",        // ASIC mining hardware — each block = 1 TH
   fan_block:         "Fan",        // cooling fan — cuts temperature rise
@@ -138,6 +163,12 @@ const PLACEABLE = new Set([
   "block_grass",
   "block_dirt",
   "block_rock",
+  // Oak tree — seed_oak uses "plant" action (not regular place) but is still in
+  // PLACEABLE so it shows up in the hotbar. Plant action is intercepted in handleCanvasClick.
+  "seed_oak",
+  // Platform blocks — one-way collision, crafted from oak wood
+  "platform_block",
+  "block_oak_leaf",
   "machine_core",
   "mining_rig",      // ASIC hardware — each block placed = 1 TH of compute
   "fan_block",       // cooling fan — place in cluster to reduce temp rise
@@ -1071,6 +1102,10 @@ export default function Game() {
     onGround:    false,// true when player is standing on a solid block
     facingRight: true, // affects pickaxe/tool sprite direction
     spawned:     false,// true once the initial spawn has been set
+    // ── Health system ──────────────────────────────────────────────────────
+    hp:    100,        // current health (0 = dead)
+    maxHp: 100,        // max health (always 100 for now)
+    lastLavaDamageAt: 0,  // timestamp of last lava damage tick (prevents spam)
   });
 
   // ── Zoom + Camera refs (no re-render needed — used in drawFrame) ─────────
@@ -1096,6 +1131,12 @@ export default function Game() {
   // ── Water splash animations ───────────────────────────────────────────────
   // "bx,by" → remaining time in ms. Water splash fades over ~800ms.
   const waterSplashRef  = useRef<Map<string, number>>(new Map());
+
+  // ── Sapling growth timers ──────────────────────────────────────────────────
+  // "bx,by" → timestamp when the sapling was planted (ms).
+  // A useEffect checks every second; once 15s have passed, sends the "grow"
+  // action to convert the sapling into a full oak log.
+  const saplingTimersRef = useRef<Map<string, number>>(new Map());
 
   // ── Light map: precomputed per-block brightness (0.0 = dark, 1.0 = lit) ──
   // Recomputed whenever world data changes. Stored as [row][col].
@@ -1335,14 +1376,23 @@ export default function Game() {
   // ════════════════════════════════════════════════════════════════════════
   // Helper: is block at grid position solid (non-air)?
   // Used by physics AABB collision every frame.
+  //
+  // fromAbove = true  → platform_block IS solid (player falls onto top surface)
+  // fromAbove = false → platform_block is NOT solid (player jumps through / walks through)
+  // This makes platform_block a one-way platform: passable from below/sides,
+  // solid only when landing from above.
   // ════════════════════════════════════════════════════════════════════════
-  const solid = useCallback((bx: number, by: number): boolean => {
+  const solid = useCallback((bx: number, by: number, fromAbove = false): boolean => {
     const bd = worldRef.current;
     if (!bd) return false;
     if (by < 0)                        return false;  // open sky above
     if (by >= bd.length)               return true;   // solid floor below world
     if (bx < 0 || bx >= bd[0].length) return true;   // solid walls at edges
-    return bd[by][bx] !== "air";
+    const blk = bd[by][bx];
+    if (blk === "air") return false;
+    // Platform blocks are one-way — solid only when falling onto the top surface
+    if (blk === "platform_block") return fromAbove;
+    return true;
   }, []);
 
   // ════════════════════════════════════════════════════════════════════════
@@ -1391,9 +1441,9 @@ export default function Game() {
       p.onGround = false;
 
       if (p.vy >= 0) {
-        // Falling — check feet collision
+        // Falling — check feet collision (fromAbove=true so platform_block is solid)
         const ty = Math.floor((npy + PH) / BS);
-        if (solid(tx0, ty) || solid(tx1, ty)) {
+        if (solid(tx0, ty, true) || solid(tx1, ty, true)) {
           p.py = ty * BS - PH;   // land on top of block
           p.vy = 0;
           p.onGround = true;
@@ -1401,7 +1451,7 @@ export default function Game() {
           p.py = npy;
         }
       } else {
-        // Rising — check head collision
+        // Rising — check head collision (fromAbove=false so platform_block is passable)
         const ty = Math.floor(npy / BS);
         if (solid(tx0, ty) || solid(tx1, ty)) {
           p.py = (ty + 1) * BS;  // bump head
@@ -1411,6 +1461,38 @@ export default function Game() {
         }
       }
       p.py = Math.max(0, Math.min(bd.length * BS - PH, p.py));
+
+      // ── LAVA DAMAGE ────────────────────────────────────────────────────
+      // Check if the player's bounding box overlaps any lava block.
+      // Drains 15 HP per 200ms (75 HP/s), giving players about 1.3s before death.
+      // On death: respawn at column 5 with full HP, reset velocity.
+      const lavaL = Math.floor(p.px / BS);
+      const lavaR = Math.floor((p.px + PW - 1) / BS);
+      const lavaT = Math.floor(p.py / BS);
+      const lavaB = Math.floor((p.py + PH - 1) / BS);
+      let touchingLava = false;
+      lavaScan:
+      for (let lavaRow = lavaT; lavaRow <= lavaB; lavaRow++) {
+        for (let lavaCol = lavaL; lavaCol <= lavaR; lavaCol++) {
+          if (bd[lavaRow]?.[lavaCol] === "block_lava") { touchingLava = true; break lavaScan; }
+        }
+      }
+      if (touchingLava && now - p.lastLavaDamageAt > 200) {
+        p.lastLavaDamageAt = now;
+        p.hp = Math.max(0, p.hp - 15);
+        if (p.hp <= 0) {
+          // Respawn: find first air cell in column 5 from the top
+          let spawnY = 0;
+          for (let sy = 0; sy < bd.length; sy++) {
+            if (bd[sy]?.[5] === "air") { spawnY = sy; break; }
+          }
+          p.hp  = 100;
+          p.px  = 5 * BS + (BS - PW) / 2;
+          p.py  = spawnY * BS;
+          p.vx  = 0;
+          p.vy  = 0;
+        }
+      }
     }
 
     // ── CAMERA: follow player, clamped to world bounds ────────────────────
@@ -1598,6 +1680,68 @@ export default function Game() {
             const fanActive = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawFanBlock(ctx, gx, gy, fanActive, now);
 
+          } else if (blk === "block_oak_log") {
+            // Oak log — dark brown trunk with vertical wood grain lines.
+            // Breaks in 1 punch and drops oak_wood + 50% chance of a seed.
+            ctx.fillStyle = "#92400e";
+            ctx.fillRect(gx * BS, gy * BS, BS, BS);
+            // Inner lighter heartwood strip
+            ctx.fillStyle = "#a16207";
+            ctx.fillRect(gx * BS + 5, gy * BS, BS - 10, BS);
+            // Vertical grain lines
+            ctx.fillStyle = "rgba(0,0,0,0.18)";
+            for (let g = 0; g < 4; g++) {
+              ctx.fillRect(gx * BS + 5 + g * 9, gy * BS, 2, BS);
+            }
+            // End-grain rings at top and bottom
+            ctx.fillStyle = "rgba(180,110,30,0.45)";
+            ctx.fillRect(gx * BS, gy * BS,           BS, 4);
+            ctx.fillRect(gx * BS, gy * BS + BS - 4,  BS, 4);
+            ctx.strokeStyle = "rgba(0,0,0,0.35)";
+            ctx.lineWidth   = 1;
+            ctx.strokeRect(gx * BS + 0.5, gy * BS + 0.5, BS - 1, BS - 1);
+
+          } else if (blk === "block_oak_leaf") {
+            // Oak leaf cluster — fluffy green canopy. Breaks in 1 punch, no drops.
+            // Rendered as layered green squares with a slight checkerboard texture.
+            ctx.fillStyle = "#15803d";
+            ctx.fillRect(gx * BS, gy * BS, BS, BS);
+            ctx.fillStyle = "#16a34a";
+            ctx.fillRect(gx * BS + 3, gy * BS + 3, BS - 6, BS - 6);
+            // Leaf texture: bright spots to look leafy
+            ctx.fillStyle = "rgba(74,222,128,0.28)";
+            for (let lxi = 0; lxi < 3; lxi++) {
+              for (let lyi = 0; lyi < 3; lyi++) {
+                if ((lxi + lyi) % 2 === 0) {
+                  ctx.fillRect(gx * BS + 4 + lxi * 11, gy * BS + 4 + lyi * 11, 8, 8);
+                }
+              }
+            }
+            ctx.strokeStyle = "rgba(0,0,0,0.2)";
+            ctx.lineWidth   = 1;
+            ctx.strokeRect(gx * BS + 0.5, gy * BS + 0.5, BS - 1, BS - 1);
+
+          } else if (blk === "platform_block") {
+            // Platform block — one-way: players land on top, jump through from below.
+            // Rendered as a thin wooden plank occupying only the lower half of the block,
+            // leaving the upper half visually open to signal that it's passable.
+            const pY = gy * BS + Math.round(BS * 0.38);   // plank starts 38% down
+            const pH = Math.round(BS * 0.62);              // plank takes lower 62%
+            // Plank body
+            ctx.fillStyle = "#7c4e1e";
+            ctx.fillRect(gx * BS, pY, BS, pH);
+            // Top highlight edge — bright stripe signals "land here from above"
+            ctx.fillStyle = "#b36b28";
+            ctx.fillRect(gx * BS, pY, BS, 4);
+            // Wood plank grain lines
+            ctx.fillStyle = "rgba(0,0,0,0.15)";
+            for (let g = 0; g < 3; g++) {
+              ctx.fillRect(gx * BS + 7 + g * (BS - 14) / 2, pY + 5, 2, pH - 6);
+            }
+            ctx.strokeStyle = "rgba(0,0,0,0.3)";
+            ctx.lineWidth   = 1;
+            ctx.strokeRect(gx * BS + 0.5, pY + 0.5, BS - 1, pH - 1);
+
           } else {
             // Standard terrain block: base color + top highlight + border
             ctx.fillStyle = BLOCK_COLORS[blk] ?? "#1e293b";
@@ -1775,6 +1919,29 @@ export default function Game() {
       ctx.fillRect(0, 0, WW, WH);
     }
 
+    // ── PLAYER HEALTH BAR (screen space, after night overlay) ─────────────
+    // 90×8px green→amber→red bar at top-left showing current HP.
+    // Always drawn on top of the night overlay so darkness never dims it.
+    {
+      const hpPct   = Math.max(0, physRef.current.hp / physRef.current.maxHp);
+      const BAR_W   = 90, BAR_H = 8, BAR_X = 10, BAR_Y = 10;
+      // Background fill
+      ctx.fillStyle = "rgba(0,0,0,0.60)";
+      ctx.fillRect(BAR_X - 2, BAR_Y - 2, BAR_W + 4, BAR_H + 4);
+      // HP fill — green → amber → red
+      ctx.fillStyle = hpPct > 0.5 ? "#22c55e" : hpPct > 0.25 ? "#f59e0b" : "#ef4444";
+      const barFill = Math.max(0, Math.round(BAR_W * hpPct));
+      if (barFill > 0) ctx.fillRect(BAR_X, BAR_Y, barFill, BAR_H);
+      // Border
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(BAR_X, BAR_Y, BAR_W, BAR_H);
+      // "HP" label above the bar
+      ctx.fillStyle   = "rgba(255,255,255,0.60)";
+      ctx.font        = "7px monospace";
+      ctx.fillText(`HP ${physRef.current.hp}`, BAR_X + 2, BAR_Y - 3);
+    }
+
     // ── CRT SCANLINE EFFECT (very subtle retro texture) ───────────────────
     ctx.fillStyle = "rgba(0,0,0,0.04)";
     for (let scanY = 0; scanY < WH; scanY += 4) {
@@ -1812,8 +1979,10 @@ export default function Game() {
             block_gold:        [180, 130,   9],  // warm gold ore
             block_diamond:     [ 14, 116, 144],  // cyan diamond ore
             block_lava:        [185,  28,  28],  // bright red hazard
-            block_oak_log:     [ 22, 101,  52],  // forest green tree trunk
+            block_oak_log:     [146,  64,  14],  // brown wood trunk (matches BLOCK_COLORS)
             block_oak_sapling: [ 34, 197,  94],  // bright green sapling
+            block_oak_leaf:    [ 22, 163,  74],  // medium green leaf canopy
+            platform_block:    [ 92,  61,  30],  // brown wooden plank
             // Machine blocks glow bright so players can spot their rig at a glance
             machine_core:      [ 34, 197,  94],  // bright green — CPU block
             mining_rig:        [ 74, 222, 128],  // lighter green — ASIC hardware
@@ -1825,6 +1994,16 @@ export default function Game() {
             fan_block:         [ 34, 211, 238],  // cyan — cooling fan
           };
 
+          // Precompute surface row per column so we can distinguish sky air
+          // (above first solid block) from underground air (enclosed caves).
+          // Sky shows as a pale blue, caves as a near-black void.
+          const surfaceRow = new Uint16Array(cols).fill(rows);
+          for (let gx = 0; gx < cols; gx++) {
+            for (let gy = 0; gy < rows; gy++) {
+              if (bd[gy][gx] !== "air") { surfaceRow[gx] = gy; break; }
+            }
+          }
+
           // Draw each block as 1 pixel using ImageData (fastest method — no
           // per-call canvas API overhead, single putImageData flush at the end)
           const imgData = mmCtx.createImageData(cols, rows);
@@ -1833,9 +2012,13 @@ export default function Game() {
           for (let gy = 0; gy < rows; gy++) {
             for (let gx = 0; gx < cols; gx++) {
               const blk = bd[gy][gx];
-              // Air above surface = sky blue; air underground = dark void
-              let r = 8, g = 10, b = 28;
-              if (blk !== "air") {
+              let r: number, g: number, b: number;
+              if (blk === "air") {
+                // Sky air (above surface): pale blue — makes terrain contour readable
+                // Underground air (caves): near-black void
+                if (gy < surfaceRow[gx]) { r = 30;  g = 55;  b = 100; }
+                else                     { r = 8;   g = 10;  b = 28;  }
+              } else {
                 const c = MM_COLORS[blk];
                 if (c) { r = c[0]; g = c[1]; b = c[2]; }
                 else   { r = 80;   g = 80;   b = 90; }  // unknown — dim gray
@@ -2098,6 +2281,43 @@ export default function Game() {
       return;
     }
 
+    // ── SEED PLANTING — seed_oak triggers the "plant" action (not "place") ──
+    // Unlike regular blocks, seeds use a special server action that validates
+    // ground underneath and tracks sapling growth timers server-side.
+    if (mode === "place" && selectedBlock === "seed_oak") {
+      if (bd[by][bx] !== "air") {
+        toast({ title: "BLOCKED", description: "Plant in an empty space above solid ground.", className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs" });
+        return;
+      }
+      if ((bd[by + 1]?.[bx] ?? "air") === "air") {
+        toast({ title: "NO GROUND", description: "Must plant on solid ground — step to an open patch of dirt or grass.", className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs" });
+        return;
+      }
+      // Optimistic: show sapling immediately
+      const updatedP = bd.map((row) => [...row]);
+      updatedP[by][bx] = "block_oak_sapling";
+      worldRef.current = updatedP;
+      const plantKey = `${bx},${by}`;
+      saplingTimersRef.current.set(plantKey, Date.now());
+      gameAction.mutate(
+        { data: { actionType: "plant" as never, worldName: "start", x: bx, y: by } },
+        {
+          onSuccess: (data) => {
+            if (!(data as { success?: boolean }).success) {
+              worldRef.current = bd;
+              saplingTimersRef.current.delete(plantKey);
+              toast({ title: "CAN'T PLANT HERE", variant: "destructive" });
+            } else {
+              refetchInventory();
+              toast({ title: "🌱 PLANTED!", description: "Sapling grows in ~15 seconds → oak wood + seed.", className: "bg-black border-green-500 text-green-400 font-mono text-xs" });
+            }
+          },
+          onError: () => { worldRef.current = bd; saplingTimersRef.current.delete(plantKey); },
+        }
+      );
+      return;
+    }
+
     // ── PLACE MODE ────────────────────────────────────────────────────────
     if (mode === "place" && selectedBlock) {
       if (bd[by][bx] !== "air") {
@@ -2115,11 +2335,17 @@ export default function Game() {
         {
           onSuccess: (data) => {
             if (data.success) {
-              // Show tip when machine block is placed
+              // Show contextual tip when machine blocks are placed
               if ((data as { machineUpdated?: boolean }).machineUpdated) {
+                // Give build-order guidance based on which machine block was just placed
+                const guide =
+                  selectedBlock === "machine_core"  ? "Now add Mining Rig + Solar Panel blocks adjacent to the Core!" :
+                  selectedBlock === "mining_rig"     ? "Connect to a Machine Core + Solar Panel via Data Cables!" :
+                  selectedBlock === "solar_panel_block" ? "Connect to a Machine Core with Data Cables to power rigs!" :
+                  "Machine structure changed — check your Miner!";
                 toast({
                   title: "⚡ RIG UPDATED",
-                  description: "Machine structure changed — check your Miner!",
+                  description: guide,
                   className: "bg-black border-primary text-primary font-mono text-xs",
                 });
               }
@@ -2200,6 +2426,40 @@ export default function Game() {
 
   // Clear crack state when world refreshes (blocks reset)
   useEffect(() => { breakingRef.current.clear(); }, [world]);
+
+  // ── Sapling growth timer ─────────────────────────────────────────────────
+  // Checks every second whether any planted sapling is ≥15s old.
+  // When mature, sends the "grow" action to the server which converts the
+  // block_oak_sapling to block_oak_log (2 blocks tall if space allows).
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const bd = worldRef.current;
+      if (!bd) return;
+      const timers = saplingTimersRef.current;
+      timers.forEach((plantedAt, key) => {
+        if (Date.now() - plantedAt < 15_000) return;  // not ready yet
+        const [bxStr, byStr] = key.split(",");
+        const bx = parseInt(bxStr, 10);
+        const by = parseInt(byStr, 10);
+        // If the sapling was already broken or grown, discard the timer
+        if (bd[by]?.[bx] !== "block_oak_sapling") { timers.delete(key); return; }
+        timers.delete(key);
+        // Optimistic update: show the grown log immediately
+        const updated = bd.map((r) => [...r]);
+        updated[by][bx] = "block_oak_log";
+        if (by > 0 && updated[by - 1]?.[bx] === "air") updated[by - 1][bx] = "block_oak_log";
+        worldRef.current = updated;
+        gameAction.mutate(
+          { data: { actionType: "grow" as never, worldName: "start", x: bx, y: by } },
+          {
+            onSuccess: () => refetchWorld(),
+            onError:   () => { worldRef.current = bd; },
+          }
+        );
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [gameAction, refetchWorld]);
 
   // ════════════════════════════════════════════════════════════════════════
   // Joystick pointer handlers — drives player movement + jump

@@ -43,7 +43,7 @@ export function getDayFactor(nowMs: number): number {
 // ─── Block break rewards ─────────────────────────────────────────────────────
 // When a player breaks a block, they earn `gems` currency and `points` (for
 // the 3-hour leaderboard revenue pool). `drop` + `dropChance` control resource drops.
-export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?: string; dropChance?: number }> = {
+export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?: string; dropChance?: number; selfDrop?: boolean }> = {
   block_dirt:          { gems: 1,  points: 10,  drop: "seed_oak",    dropChance: 0.15 },
   block_grass:         { gems: 1,  points: 8,   drop: "seed_oak",    dropChance: 0.30 },
   block_iron:          { gems: 3,  points: 20,  drop: "raw_iron",    dropChance: 1.0  },
@@ -54,6 +54,10 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   // Oak tree — breaks in one punch, drops wood + sometimes a seed
   block_oak_sapling:   { gems: 0,  points: 0,   drop: "seed_oak",    dropChance: 1.0  },
   block_oak_log:       { gems: 2,  points: 5,   drop: "seed_oak",    dropChance: 0.5  },
+  // Oak leaf clusters — light and airy, no drops
+  block_oak_leaf:      { gems: 0,  points: 0                                          },
+  // Platform block — crafted from wood, one-way collision (solid from above)
+  platform_block:      { gems: 0,  points: 0                                          },
   // Machine blocks return themselves (like grass/dirt) so players can re-arrange rigs
   machine_core:        { gems: 0,  points: 0                                          },
   mining_rig:          { gems: 0,  points: 0                                          }, // ASIC rig hardware — returns itself
@@ -104,7 +108,8 @@ export const MINER_RATES: Record<number, number> = {
 // ─── Fan cooling constant ──────────────────────────────────────────────────────
 // Each fan_block connected to the cluster reduces the miner's hourly temp rise.
 // With 4 fans the rig runs indefinitely without overheating at base level.
-export const FAN_COOLING_PER_HOUR = 2.5; // °C removed per fan_block per hour
+// Must be TEMP_RISE_PER_HOUR / 4 = 25 so 4 fans fully cancel the rise.
+export const FAN_COOLING_PER_HOUR = 25; // °C removed per fan_block per hour
 
 // ─── Gem cost to upgrade the rig via the Miner page ──────────────────────────
 // Costs escalate steeply — upgrades are a significant gem sink.
@@ -136,7 +141,9 @@ export const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
 
 // ─── Temperature system ───────────────────────────────────────────────────────
 // Miner heats up over time; at 100°C it stops earning until cooled.
-export const TEMP_RISE_PER_HOUR = 8.33; // reaches 100°C in ~12 hours without maintenance
+// Rate is set so the rig reaches 100°C in ~1 hour of runtime — noticeable
+// within a play session, and meaningful enough that cooling matters.
+export const TEMP_RISE_PER_HOUR = 100; // reaches 100°C in ~1 hour without fans
 export const MAX_TEMP = 100;
 
 // ─── Diesel fuel system ───────────────────────────────────────────────────────
@@ -199,6 +206,8 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   oak_wood:          "Oak Wood",
   block_oak_log:     "Oak Log",
   block_oak_sapling: "Oak Sapling",
+  block_oak_leaf:    "Oak Leaf",
+  platform_block:    "Platform Block",
   // Blocks
   block_dirt:        "Dirt Block",
   block_grass:       "Grass Block",
@@ -410,12 +419,25 @@ export const CRAFTING_RECIPES: Record<string, {
   // 4 fans fully cancel the base heat rise — rig stays cool indefinitely.
   fan_block: {
     displayName: "Cooling Fan",
-    description: "Industrial cooling fan. Each fan cuts temperature rise by 2.5°C/hr. 4 fans = rig stays cool indefinitely at base load.",
+    description: "Industrial cooling fan. Each fan cuts temperature rise by 25°C/hr. 4 fans = rig stays cool indefinitely at base load.",
     ingredients: [
       { itemId: "raw_iron", quantity: 2 },
     ],
     result: "fan_block",
     resultQty: 2,   // crafts 2 at once since you need several
+  },
+
+  // ── Platform Block — one-way collision platform ────────────────────────────
+  // Players can jump through from below but land on top (like Terraria platforms).
+  // Cheap to craft from oak wood — encourages tree cutting early game.
+  platform_block: {
+    displayName: "Platform Block",
+    description: "One-way wooden platform. Jump through from below, land on top. Great for building multi-level bases.",
+    ingredients: [
+      { itemId: "oak_wood", quantity: 3 },
+    ],
+    result: "platform_block",
+    resultQty: 2,   // crafts 2 at once
   },
 };
 
@@ -439,6 +461,8 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   oak_wood:          "resources",
   block_oak_log:     "blocks",
   block_oak_sapling: "blocks",
+  block_oak_leaf:    "blocks",
+  platform_block:    "blocks",
   block_dirt:        "blocks",
   block_grass:       "blocks",
   block_rock:        "blocks",

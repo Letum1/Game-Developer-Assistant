@@ -25,6 +25,7 @@ const actionTimestamps: Map<number, number[]> = new Map();
 
 // ─── Self-drop blocks: breaking returns the same block to inventory ───────────
 // Machine blocks all return themselves so players can rearrange rigs freely.
+// Platform block also returns itself so players can rearrange their structures.
 const SELF_DROP_BLOCKS = new Set([
   "block_grass", "block_dirt", "block_rock",
   "machine_core", "solar_panel_block", "data_cable",
@@ -33,6 +34,7 @@ const SELF_DROP_BLOCKS = new Set([
   "fan_block",       // cooling fan — returns itself so fans are rearrangeable
   "battery_block",   // returns itself so players can rearrange energy storage
   "generator_block", // returns itself so players can rearrange generators
+  "platform_block",  // one-way platform — returns itself so bases are rearrangeable
 ]);
 
 // ─── Oak tree blocks: breaking gives oak_wood (not the block itself) ─────────
