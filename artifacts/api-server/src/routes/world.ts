@@ -56,18 +56,21 @@ function generateDefaultGrid(): string[][] {
         if      (r < 0.06)  grid[y][x] = "block_iron";
         else                 grid[y][x] = "block_dirt";
       } else if (y < 15) {
-        // Mid-depth rock with gold and iron
+        // Mid-depth rock with gold, iron, and occasional lava pockets
+        // BUG FIX: lava check must come BEFORE the iron check — otherwise
+        // r < 0.04 is unreachable because r < 0.14 always matches first.
         const r = Math.random();
-        if      (r < 0.06)  grid[y][x] = "block_gold";
-        else if (r < 0.14)  grid[y][x] = "block_iron";
-        else if (r < 0.04)  grid[y][x] = "block_lava";
+        if      (r < 0.04)  grid[y][x] = "block_lava";   // ~4% lava
+        else if (r < 0.10)  grid[y][x] = "block_gold";   // ~6% gold
+        else if (r < 0.22)  grid[y][x] = "block_iron";   // ~12% iron
         else                grid[y][x] = "block_rock";
       } else {
-        // Deep rock with diamonds
+        // Deep rock with diamonds, gold, and lava
+        // BUG FIX: same issue — lava check moved before gold so it can actually spawn.
         const r = Math.random();
-        if      (r < 0.07)  grid[y][x] = "block_diamond";
-        else if (r < 0.16)  grid[y][x] = "block_gold";
-        else if (r < 0.03)  grid[y][x] = "block_lava";
+        if      (r < 0.03)  grid[y][x] = "block_lava";    // ~3% lava
+        else if (r < 0.10)  grid[y][x] = "block_diamond"; // ~7% diamond
+        else if (r < 0.19)  grid[y][x] = "block_gold";    // ~9% gold
         else                grid[y][x] = "block_rock";
       }
     }
@@ -219,11 +222,13 @@ router.post("/world/expand", async (req, res) => {
           const r = Math.random();
           blk = r < 0.06 ? "block_iron" : "block_dirt";
         } else if (y < 15) {
+          // BUG FIX: lava check first so it can actually spawn (same fix as generateDefaultGrid)
           const r = Math.random();
-          blk = r < 0.06 ? "block_gold" : r < 0.14 ? "block_iron" : "block_rock";
+          blk = r < 0.04 ? "block_lava" : r < 0.10 ? "block_gold" : r < 0.22 ? "block_iron" : "block_rock";
         } else {
+          // BUG FIX: lava check first for deep layer too
           const r = Math.random();
-          blk = r < 0.07 ? "block_diamond" : r < 0.16 ? "block_gold" : "block_rock";
+          blk = r < 0.03 ? "block_lava" : r < 0.10 ? "block_diamond" : r < 0.19 ? "block_gold" : "block_rock";
         }
         grid[y].push(blk);
       }

@@ -114,6 +114,12 @@ router.post("/miner/tick", async (req, res) => {
     const solarPanels = parseInt(m.solar_panels) || 0;
     const generators  = parseInt(m.generators)   || 0;
 
+    // BUG FIX: fuel must be declared BEFORE it is used in the alwaysOn check below.
+    // Previously `fuel` was declared after `alwaysOn`, causing a TDZ ReferenceError
+    // whenever a player with a generator or battery triggered a /miner/tick request.
+    const fuel     = parseInt(m.fuel) || 0;
+    let   newFuel  = fuel;
+
     // Solar panels only generate power during the day (dayFactor > 0.15).
     // Batteries and generators (stored in the `generators` column) are always-on.
     // A rig with ONLY solar panels goes offline at night — no stored energy.
@@ -132,8 +138,6 @@ router.post("/miner/tick", async (req, res) => {
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
-    const fuel     = parseInt(m.fuel) || 0;
-    let   newFuel  = fuel;
 
     if (isRunning && elapsedSeconds > 0) {
       const rate = minerRate(activeRigs);   // rate scales with powered rig count

@@ -70,6 +70,12 @@ async function tickMiner(userId: number): Promise<boolean> {
     const solarPanels = parseInt(m.solar_panels) || 0;
     const generators  = parseInt(m.generators)   || 0;
 
+    // BUG FIX: fuel must be declared BEFORE it is used in the alwaysOn check below.
+    // Previously `fuel` was declared after `alwaysOn`, causing a TDZ ReferenceError
+    // whenever a player had a generator or battery block in their rig.
+    const fuel     = parseInt(m.fuel) || 0;
+    let   newFuel  = fuel;
+
     // Determine power availability at the time of the tick
     const dayFactor   = getDayFactor(now.getTime());
     const solarActive = solarPanels > 0 && dayFactor > 0.15;
@@ -85,8 +91,6 @@ async function tickMiner(userId: number): Promise<boolean> {
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
-    const fuel     = parseInt(m.fuel) || 0;
-    let   newFuel  = fuel;
 
     if (isRunning && elapsedSeconds > 0) {
       const rate  = minerRate(activeRigs);  // rate scales with active rig count
