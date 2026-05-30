@@ -426,16 +426,47 @@ router.post("/admin/simulate-time", async (req, res) => {
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
 
-    if (isRunning) {
-      const rate = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
-      newBalance += rate * elapsedSeconds;
+    const rate              = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
+    const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
 
-      // Temperature rises — fans reduce how fast
-      const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
-      newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
+    // ── Figure out the EARLIEST stopping event within the window ─────────────
+    // The miner stops when temp hits MAX_TEMP OR fuel runs dry.
+    // We calculate how many seconds each event would take, then take the minimum.
+    let stopReasonOverheat = false;
+    let stopReasonFuel     = false;
+    let runsForSeconds     = elapsedSeconds; // how long it actually ran (≤ elapsedSeconds)
+    let overheatsAtSecond: number | null = null;
+
+    if (isRunning) {
+      // Seconds until overheat (null = fans keep it below MAX_TEMP forever)
+      if (effectiveTempRise > 0) {
+        const secsUntilOverheat = ((MAX_TEMP - temp) / effectiveTempRise) * 3600;
+        if (secsUntilOverheat <= elapsedSeconds) {
+          runsForSeconds  = secsUntilOverheat;
+          overheatsAtSecond = parseFloat(secsUntilOverheat.toFixed(1));
+          stopReasonOverheat = true;
+        }
+      }
+
+      // Seconds until fuel empty (only if generators are the sole power source)
+      if (generators > 0 && !solarActive && fuel > 0) {
+        const drainPerSec   = generators * FUEL_DRAIN_RATE;
+        const secsUntilEmpty = fuel / drainPerSec;
+        // If fuel runs out BEFORE the overheat stop, adjust run window
+        if (secsUntilEmpty < runsForSeconds) {
+          runsForSeconds     = secsUntilEmpty;
+          overheatsAtSecond  = null;        // stopped by fuel, not temp
+          stopReasonOverheat = false;
+          stopReasonFuel     = true;
+        }
+      }
+
+      // Apply earnings and temp rise only for the time the miner actually ran
+      newBalance += rate * runsForSeconds;
+      newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * runsForSeconds);
     }
 
-    // Fuel drain (always-on sources burn diesel even when overheated)
+    // Fuel drain runs for the full window (always-on sources burn even post-overheat)
     if (generators > 0) {
       newFuel = Math.max(0, newFuel - generators * FUEL_DRAIN_RATE * elapsedSeconds);
     }
@@ -446,8 +477,8 @@ router.post("/admin/simulate-time", async (req, res) => {
     newFuel = Math.round(newFuel);
 
     // Re-evaluate running state with updated temp + fuel
-    const nowSolar    = solarPanels > 0 && getDayFactor(Date.now()) > 0.15;
-    const nowAlwaysOn = generators > 0 && newFuel > 0;
+    const nowSolar     = solarPanels > 0 && getDayFactor(Date.now()) > 0.15;
+    const nowAlwaysOn  = generators > 0 && newFuel > 0;
     const stillRunning = newTemp < MAX_TEMP && (nowSolar || nowAlwaysOn) && rigCount > 0;
 
     // ── Write results — keep last_tick_at unchanged so the real ticker ──────
@@ -464,7 +495,14 @@ router.post("/admin/simulate-time", async (req, res) => {
     res.json({
       success: true,
       simulated: {
-        elapsedSeconds,
+        elapsedSeconds,                       // total window requested
+        runsForSeconds: parseFloat(runsForSeconds.toFixed(1)), // how long it actually ran
+        stoppedEarly:   runsForSeconds < elapsedSeconds,       // true if it stopped before window ended
+        stopReason:     stopReasonOverheat ? "overheat"
+                        : stopReasonFuel   ? "fuel_empty"
+                        : isRunning        ? "still_running"
+                        : "was_not_running",
+        overheatsAtSecond,  // null = did not overheat during window
         wasRunning:   isRunning,
         oldTemp:      temp,
         newTemp:      parseFloat(newTemp.toFixed(2)),

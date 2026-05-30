@@ -357,3 +357,13 @@
     inset: -1px;
   }
 }
+
+/* ── Floating earnings particle animation ─────────────────────────────────
+   Used by the +$X.XX particles that drift upward over the Live Yield card
+   on the Miner page. The particle starts fully visible at its spawn position
+   and floats 80px up while fading to transparent over 2 seconds.           */
+@keyframes floatUp {
+  0%   { transform: translateY(0)    scale(1.0); opacity: 1;   }
+  60%  { transform: translateY(-50px) scale(1.05); opacity: 0.8; }
+  100% { transform: translateY(-80px) scale(0.9); opacity: 0;   }
+}

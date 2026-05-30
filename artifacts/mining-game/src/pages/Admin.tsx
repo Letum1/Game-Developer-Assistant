@@ -61,6 +61,10 @@ interface MinerState {
 // ── Simulation result returned by POST /api/admin/simulate-time ──────────
 interface SimResult {
   elapsedSeconds: number;
+  runsForSeconds: number;       // how long it actually ran (≤ elapsedSeconds)
+  stoppedEarly: boolean;        // true if it stopped before the window ended
+  stopReason: "overheat" | "fuel_empty" | "still_running" | "was_not_running";
+  overheatsAtSecond: number | null; // null = didn't overheat in this window
   wasRunning: boolean;
   oldTemp: number;
   newTemp: number;
@@ -488,23 +492,48 @@ export default function Admin() {
 
               {/* Simulation result banner */}
               {simResult && (
-                <div className={`rounded border p-3 space-y-1 text-xs ${
+                <div className={`rounded border p-3 space-y-2 text-xs ${
                   simResult.overheated
                     ? "border-red-500/40 bg-red-500/10 text-red-300"
+                    : simResult.stopReason === "fuel_empty"
+                    ? "border-orange-500/40 bg-orange-500/10 text-orange-300"
                     : "border-green-500/40 bg-green-500/10 text-green-300"
                 }`}>
+                  {/* Header row */}
                   <div className="flex items-center gap-2 font-bold">
-                    {simResult.overheated
+                    {simResult.overheated || simResult.stopReason === "fuel_empty"
                       ? <AlertTriangle className="w-3 h-3" />
                       : <CheckCircle2 className="w-3 h-3" />}
-                    Sim result — {fmtSecs(simResult.elapsedSeconds)} fast-forwarded
+                    Sim result — {fmtSecs(simResult.elapsedSeconds)} window
                   </div>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] mt-1">
+
+                  {/* ── Run duration — the key new info ── */}
+                  <div className={`rounded px-2 py-1.5 text-[11px] font-mono ${
+                    simResult.stoppedEarly ? "bg-red-900/40" : "bg-green-900/30"
+                  }`}>
+                    {simResult.stopReason === "was_not_running" ? (
+                      <span>⛔ Miner was <strong>not running</strong> — no income, no temp rise.</span>
+                    ) : simResult.stoppedEarly ? (
+                      <>
+                        ⏱ Ran for <strong>{fmtSecs(simResult.runsForSeconds)}</strong> then stopped
+                        {simResult.stopReason === "overheat"
+                          ? <> — <span className="text-red-300 font-bold">🔥 OVERHEATED</span> at {fmtSecs(simResult.overheatsAtSecond ?? simResult.runsForSeconds)}</>
+                          : <> — <span className="text-orange-300 font-bold">⛽ FUEL EMPTY</span></>}
+                        <br />
+                        <span className="text-muted-foreground">
+                          Idle for remaining {fmtSecs(simResult.elapsedSeconds - simResult.runsForSeconds)} (no earnings after stop)
+                        </span>
+                      </>
+                    ) : (
+                      <span>✅ Ran the full <strong>{fmtSecs(simResult.runsForSeconds)}</strong> — still running after window</span>
+                    )}
+                  </div>
+
+                  {/* Stats grid */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
                     <span>Temp: {simResult.oldTemp.toFixed(1)}°C → <strong>{simResult.newTemp.toFixed(1)}°C</strong></span>
-                    <span>Overheated: <strong>{simResult.overheated ? "YES 🔥" : "No"}</strong></span>
-                    <span>Was running: {simResult.wasRunning ? "Yes" : "No"}</span>
-                    <span>Still running: <strong>{simResult.isRunning ? "Yes" : "No"}</strong></span>
-                    <span>Balance +{simResult.earned.toFixed(8)}</span>
+                    <span>Still running: <strong>{simResult.isRunning ? "Yes ✅" : "No ❌"}</strong></span>
+                    <span>Earned: <strong>+{simResult.earned.toFixed(8)}</strong></span>
                     <span>Fuel: {simResult.oldFuel} → {simResult.newFuel}</span>
                   </div>
                 </div>

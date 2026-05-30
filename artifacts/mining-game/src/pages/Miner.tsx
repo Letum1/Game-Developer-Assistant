@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 // ── How rig level works (new model): level is now driven by world blocks, not gems.
 // Place Machine Core + Mining Rig blocks (each = 1 TH, needs 1 power unit to run).
 // Connect Solar Panels or Generators via Data Cables to supply power.
@@ -46,6 +46,12 @@ export default function Miner() {
   const [adToken, setAdToken] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
 
+  // ── Floating earnings particles ───────────────────────────────────────────
+  // Each particle floats upward over the balance display, then disappears.
+  // Spawned every 3 seconds while the miner is running.
+  const [particles, setParticles] = useState<{ id: number; label: string; x: number }[]>([]);
+  const particleIdRef = useRef(0);
+
   // Sync initial
   useEffect(() => {
     if (miner) setLocalBalance(miner.currentBalance);
@@ -61,6 +67,38 @@ export default function Miner() {
 
     return () => clearInterval(interval);
   }, [miner]);
+
+  // ── Particle spawner — fires every 3s while the miner is running ──────────
+  // Shows a floating +$X.XXXXXXXX label that drifts upward over the balance card.
+  // The label amount = 3 seconds worth of earnings in USD so it feels accurate.
+  useEffect(() => {
+    if (!miner || !miner.isRunning || !btcPrice) return;
+
+    const spawnParticle = () => {
+      const earned3s = ((miner.ratePerSecond ?? 0) * 3 / 100_000_000) * btcPrice;
+      const label = earned3s < 0.000001
+        ? `+$${earned3s.toFixed(10)}`
+        : earned3s < 0.001
+        ? `+$${earned3s.toFixed(8)}`
+        : `+$${earned3s.toFixed(6)}`;
+
+      // Random horizontal offset so particles don't all stack on top of each other
+      const x = 30 + Math.random() * 40; // % from left of container
+      const id = ++particleIdRef.current;
+
+      setParticles(prev => [...prev, { id, label, x }]);
+
+      // Remove this particle after its 2s animation completes
+      setTimeout(() => {
+        setParticles(prev => prev.filter(p => p.id !== id));
+      }, 2000);
+    };
+
+    const interval = setInterval(spawnParticle, 3000);
+    // Spawn one immediately so the user sees it right away
+    spawnParticle();
+    return () => clearInterval(interval);
+  }, [miner, btcPrice]);
 
   // Server Tick every 30s
   useEffect(() => {
@@ -317,7 +355,26 @@ export default function Miner() {
               <Activity className="w-4 h-4 mr-2" /> Live Yield
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center py-8 gap-4">
+          <CardContent className="flex flex-col items-center justify-center py-8 gap-4 relative">
+
+            {/* ── Floating earnings particles — drift upward and fade out ─────── */}
+            {/* Spawned every 3s while the miner is running. Pure CSS animation.  */}
+            {particles.map(p => (
+              <span
+                key={p.id}
+                className="pointer-events-none absolute select-none font-mono font-bold text-primary text-xs"
+                style={{
+                  left: `${p.x}%`,
+                  bottom: "60%",
+                  animation: "floatUp 2s ease-out forwards",
+                  textShadow: "0 0 8px rgba(34,197,94,0.8)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {p.label}
+              </span>
+            ))}
+
             {/* ── Live balance counter — ticks locally every 100ms, shown in USD ── */}
             <div className="text-4xl md:text-6xl font-black text-primary tracking-tighter drop-shadow-[0_0_15px_rgba(34,197,94,0.6)] font-mono tabular-nums">
               {satsToUsd(localBalance)}
