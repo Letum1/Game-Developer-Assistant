@@ -146,20 +146,33 @@ export const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
 export const TEMP_RISE_PER_HOUR = 100; // reaches 100°C in ~1 hour without fans
 export const MAX_TEMP = 100;
 
-// ─── Diesel fuel system ───────────────────────────────────────────────────────
-// Generators and batteries share the `fuel` column in the miners table.
-// Generators consume fuel while running; batteries drain at night and recharge
-// via solar panels during the day.
-// fuel range: 0 – MAX_FUEL (integer units)
-export const MAX_FUEL              = 500;   // max stored fuel / charge
-export const DIESEL_PER_CAN        = 100;   // fuel units added per diesel_can item
-// Drain: each always-on "source unit" burns this many fuel units per second.
-// 1 battery_block = 1 source unit; 1 generator_block = 2 source units.
-// With 1 generator (2 units): 100 fuel lasts ~1000s ≈ 3 nights of runtime.
-export const FUEL_DRAIN_RATE       = 0.05; // units per second per always-on source
-// Recharge: solar panels replenish battery fuel during daylight hours.
-// With 2 panels: 1.0 unit/sec → fills 500-unit battery in ~8 min of sunshine.
-export const BATTERY_CHARGE_RATE   = 0.5;  // units per second per solar panel (day only)
+// ─── Power source fuel systems ────────────────────────────────────────────────
+// Batteries and generators are now SEPARATE systems tracked in separate columns.
+//
+// battery_block: stores solar energy during the day; discharges at night.
+//   - battery_charge column  (0–MAX_BATTERY_CHARGE): current stored energy.
+//   - Charged by: solar panels at BATTERY_CHARGE_RATE units/sec (day only).
+//   - Discharged by: running rigs at night at BATTERY_DRAIN_RATE units/sec/block.
+//   - Refuelled naturally via sunlight — no item needed.
+//
+// generator_block: burns diesel cans; always on when fuelled.
+//   - fuel column (0–MAX_FUEL): diesel tank level.
+//   - Drained at: FUEL_DRAIN_RATE units/sec/generator, day AND night.
+//   - Refuelled by: using a Diesel Can item on the generator in the game world.
+export const MAX_BATTERY_CHARGE    = 500;  // max battery charge level
+export const MAX_FUEL              = 500;   // max diesel tank level
+export const DIESEL_PER_CAN        = 100;   // diesel units added per diesel_can item
+
+// Battery charge: solar panels top up battery_charge during daylight.
+// 2 solar panels × 0.5/sec × 414s (day) ≈ 414 units per cycle.
+export const BATTERY_CHARGE_RATE   = 0.5;  // battery_charge units/sec per solar panel (day)
+// Battery drain: each battery_block providing night power burns this much charge/sec.
+// 1 battery with 414 charge lasts 414/0.5 = 828s ≈ 14 min (night is ~8 min).
+export const BATTERY_DRAIN_RATE    = 0.5;  // battery_charge units/sec per battery block
+
+// Diesel drain: each generator_block burns this much fuel per second, always.
+// 1 generator with 500 fuel lasts 500/0.1 = 5000s ≈ 83 min ≈ 5 day/night cycles.
+export const FUEL_DRAIN_RATE       = 0.1;  // diesel fuel units/sec per generator_block
 
 // ─── Store items ──────────────────────────────────────────────────────────────
 // Only real, directly usable items are sold here.

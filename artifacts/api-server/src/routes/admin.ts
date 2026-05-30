@@ -293,9 +293,11 @@ router.post("/admin/add-points", async (req, res) => {
 });
 
 // ── GET /api/admin/miner-state — full miner snapshot for a player ──────────
-// Body (query): ?userId=N
+// Query: ?userId=N
 // Returns everything in the miners row plus computed fields so the admin
-// panel can display live overheat ETA and earned balance.
+// panel can display live overheat ETA, earned balance, and power source detail.
+// Now returns batteries/batteryCharge (solar storage) separately from
+// generators/fuel (diesel power).
 router.get("/admin/miner-state", async (req, res) => {
   const userId = parseInt(req.query["userId"] as string);
   if (!userId || isNaN(userId)) {
@@ -308,29 +310,31 @@ router.get("/admin/miner-state", async (req, res) => {
       res.status(404).json({ error: "Miner not found" });
       return;
     }
-    const m = result.rows[0];
-    const rigCount    = parseInt(m.level) || 0;
-    const fans        = parseInt(m.fans)  || 0;
-    const solarPanels = parseInt(m.solar_panels) || 0;
-    const generators  = parseInt(m.generators)   || 0;
-    const temp        = parseFloat(m.temperature);
-    const fuel        = parseInt(m.fuel) || 0;
+    const m             = result.rows[0];
+    const rigCount      = parseInt(m.level)          || 0;
+    const fans          = parseInt(m.fans)            || 0;
+    const solarPanels   = parseInt(m.solar_panels)    || 0;
+    const batteries     = parseInt(m.batteries)       || 0;   // battery_block count
+    const batteryCharge = parseInt(m.battery_charge)  || 0;   // current stored energy
+    const generators    = parseInt(m.generators)      || 0;   // generator_block count
+    const fuel          = parseInt(m.fuel)            || 0;   // diesel level
+    const temp          = parseFloat(m.temperature);
 
-    // Effective temperature rise per hour with current fans
-    // Matches the formula in passive-ticker.ts and miner.ts
-    const { TEMP_RISE_PER_HOUR, FAN_COOLING_PER_HOUR, MAX_TEMP, MINER_RATES } = await import("../lib/game-constants");
+    const {
+      TEMP_RISE_PER_HOUR, FAN_COOLING_PER_HOUR, MAX_TEMP, MINER_RATES,
+    } = await import("../lib/game-constants");
+
     const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
 
-    // Seconds until miner hits MAX_TEMP (0 if already overheated or not rising)
-    const remainingDegrees = MAX_TEMP - temp;
+    // Seconds until miner hits MAX_TEMP (null = fans keep it cool or already overheated)
     const secsToOverheat = effectiveTempRise > 0 && temp < MAX_TEMP
-      ? (remainingDegrees / effectiveTempRise) * 3600
+      ? ((MAX_TEMP - temp) / effectiveTempRise) * 3600
       : null;
 
-    // Seconds since last_tick_at
     const secsSinceLastTick = (Date.now() - new Date(m.last_tick_at).getTime()) / 1000;
 
-    const powerSupply = solarPanels + generators;
+    // Max power supply (all sources available — actual depends on day/night + charge/fuel)
+    const powerSupply = solarPanels + batteries + generators;
     const activeRigs  = Math.min(rigCount, powerSupply);
     const ratePerSec  = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
 
@@ -346,8 +350,10 @@ router.get("/admin/miner-state", async (req, res) => {
       rigCount,
       fans,
       solarPanels,
-      generators,
-      fuel,
+      batteries,         // battery_block count
+      batteryCharge,     // current battery energy (0–500)
+      generators,        // generator_block count
+      fuel,              // diesel tank level (0–500)
       lastTickAt:        m.last_tick_at,
       secsSinceLastTick: Math.floor(secsSinceLastTick),
     });
@@ -399,29 +405,35 @@ router.post("/admin/simulate-time", async (req, res) => {
       TEMP_RISE_PER_HOUR,
       FAN_COOLING_PER_HOUR,
       MAX_TEMP,
+      MAX_BATTERY_CHARGE,
       MAX_FUEL,
       FUEL_DRAIN_RATE,
       BATTERY_CHARGE_RATE,
+      BATTERY_DRAIN_RATE,
       getDayFactor,
     } = await import("../lib/game-constants");
 
-    const rigCount    = parseInt(m.level) || 0;
-    const fans        = parseInt(m.fans)  || 0;
-    const temp        = parseFloat(m.temperature);
-    const solarPanels = parseInt(m.solar_panels) || 0;
-    const generators  = parseInt(m.generators)   || 0;
-    const fuel        = parseInt(m.fuel) || 0;
-    let   newFuel     = fuel;
+    const rigCount      = parseInt(m.level)          || 0;
+    const fans          = parseInt(m.fans)            || 0;
+    const temp          = parseFloat(m.temperature);
+    const solarPanels   = parseInt(m.solar_panels)    || 0;
+    const batteries     = parseInt(m.batteries)       || 0;  // battery_block count
+    const generators    = parseInt(m.generators)      || 0;  // generator_block count
+    let   batteryCharge = parseInt(m.battery_charge)  || 0;  // stored solar energy
+    let   fuel          = parseInt(m.fuel)            || 0;  // diesel level
 
-    // Use current wall-clock time to evaluate solar power
+    // ── Solar availability ────────────────────────────────────────────────────
     const dayFactor   = getDayFactor(Date.now());
     const solarActive = solarPanels > 0 && dayFactor > 0.15;
-    const alwaysOn    = generators > 0 && fuel > 0;
-    const powerSupply = (solarActive ? solarPanels : 0) + (alwaysOn ? generators : 0);
-    const activeRigs  = Math.min(rigCount, powerSupply);
 
-    // Miner must be running AND powered AND have hardware to earn/heat
-    const isRunning   = m.is_running && temp < MAX_TEMP && (solarActive || alwaysOn) && rigCount > 0;
+    // ── Pre-tick power state (before any charge/drain in this window) ─────────
+    const batteryActive   = batteries > 0 && batteryCharge > 0 && !solarActive;
+    const generatorActive = generators > 0 && fuel > 0;
+    const powerSupply     = (solarActive ? solarPanels : 0)
+                          + (batteryActive ? batteries : 0)
+                          + (generatorActive ? generators : 0);
+    const activeRigs      = Math.min(rigCount, powerSupply);
+    const isRunning       = m.is_running && temp < MAX_TEMP && powerSupply > 0 && rigCount > 0;
 
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
@@ -430,64 +442,86 @@ router.post("/admin/simulate-time", async (req, res) => {
     const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
 
     // ── Figure out the EARLIEST stopping event within the window ─────────────
-    // The miner stops when temp hits MAX_TEMP OR fuel runs dry.
-    // We calculate how many seconds each event would take, then take the minimum.
+    // The miner stops when temp hits MAX_TEMP OR power runs out (fuel empty / battery dead).
     let stopReasonOverheat = false;
     let stopReasonFuel     = false;
-    let runsForSeconds     = elapsedSeconds; // how long it actually ran (≤ elapsedSeconds)
+    let runsForSeconds     = elapsedSeconds;
     let overheatsAtSecond: number | null = null;
 
     if (isRunning) {
-      // Seconds until overheat (null = fans keep it below MAX_TEMP forever)
+      // Seconds until overheat
       if (effectiveTempRise > 0) {
         const secsUntilOverheat = ((MAX_TEMP - temp) / effectiveTempRise) * 3600;
         if (secsUntilOverheat <= elapsedSeconds) {
-          runsForSeconds  = secsUntilOverheat;
-          overheatsAtSecond = parseFloat(secsUntilOverheat.toFixed(1));
+          runsForSeconds     = secsUntilOverheat;
+          overheatsAtSecond  = parseFloat(secsUntilOverheat.toFixed(1));
           stopReasonOverheat = true;
         }
       }
 
-      // Seconds until fuel empty (only if generators are the sole power source)
-      if (generators > 0 && !solarActive && fuel > 0) {
-        const drainPerSec   = generators * FUEL_DRAIN_RATE;
+      // Seconds until generator fuel empty (generators are sole power source at night)
+      if (generators > 0 && !solarActive && fuel > 0 && !batteryActive) {
+        const drainPerSec    = generators * FUEL_DRAIN_RATE;
         const secsUntilEmpty = fuel / drainPerSec;
-        // If fuel runs out BEFORE the overheat stop, adjust run window
         if (secsUntilEmpty < runsForSeconds) {
           runsForSeconds     = secsUntilEmpty;
-          overheatsAtSecond  = null;        // stopped by fuel, not temp
+          overheatsAtSecond  = null;
           stopReasonOverheat = false;
           stopReasonFuel     = true;
         }
       }
 
+      // Seconds until battery dead (batteries are sole power source at night)
+      if (batteries > 0 && !solarActive && batteryCharge > 0 && !generatorActive) {
+        const drainPerSec    = batteries * BATTERY_DRAIN_RATE;
+        const secsUntilDead  = batteryCharge / drainPerSec;
+        if (secsUntilDead < runsForSeconds) {
+          runsForSeconds     = secsUntilDead;
+          overheatsAtSecond  = null;
+          stopReasonOverheat = false;
+          stopReasonFuel     = true; // "fuel_empty" covers both battery dead and diesel empty
+        }
+      }
+
       // Apply earnings and temp rise only for the time the miner actually ran
       newBalance += rate * runsForSeconds;
-      newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * runsForSeconds);
+      newTemp     = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * runsForSeconds);
     }
 
-    // Fuel drain runs for the full window (always-on sources burn even post-overheat)
-    if (generators > 0) {
-      newFuel = Math.max(0, newFuel - generators * FUEL_DRAIN_RATE * elapsedSeconds);
-    }
-    // Battery recharge (solar tops up fuel during the day)
+    // ── Battery: charge from solar during day; discharge at night ────────────
     if (solarActive && solarPanels > 0) {
-      newFuel = Math.min(MAX_FUEL, newFuel + solarPanels * BATTERY_CHARGE_RATE * elapsedSeconds);
+      batteryCharge = Math.min(MAX_BATTERY_CHARGE,
+        batteryCharge + solarPanels * BATTERY_CHARGE_RATE * elapsedSeconds);
     }
-    newFuel = Math.round(newFuel);
+    if (batteryActive) {
+      batteryCharge = Math.max(0,
+        batteryCharge - batteries * BATTERY_DRAIN_RATE * elapsedSeconds);
+    }
 
-    // Re-evaluate running state with updated temp + fuel
-    const nowSolar     = solarPanels > 0 && getDayFactor(Date.now()) > 0.15;
-    const nowAlwaysOn  = generators > 0 && newFuel > 0;
-    const stillRunning = newTemp < MAX_TEMP && (nowSolar || nowAlwaysOn) && rigCount > 0;
+    // ── Diesel drain: generators always burn fuel ─────────────────────────────
+    if (generators > 0) {
+      fuel = Math.max(0, fuel - generators * FUEL_DRAIN_RATE * elapsedSeconds);
+    }
 
-    // ── Write results — keep last_tick_at unchanged so the real ticker ──────
+    batteryCharge = Math.round(batteryCharge);
+    fuel          = Math.round(fuel);
+
+    // Re-evaluate running state with updated values
+    const nowBatteryActive   = batteries  > 0 && batteryCharge > 0 && !solarActive;
+    const nowGeneratorActive = generators > 0 && fuel > 0;
+    const nowSolar           = solarPanels > 0 && getDayFactor(Date.now()) > 0.15;
+    const stillRunning       = newTemp < MAX_TEMP
+                             && (nowSolar || nowBatteryActive || nowGeneratorActive)
+                             && rigCount > 0;
+
+    // ── Write results — keep last_tick_at unchanged so the real ticker ────────
     // continues its normal schedule from where it left off.
     await client.query(
       `UPDATE miners
-       SET current_balance=$1, temperature=$2, is_running=$3, fuel=$4
-       WHERE user_id=$5`,
-      [newBalance.toFixed(10), newTemp.toFixed(2), stillRunning, newFuel, userId]
+       SET current_balance=$1, temperature=$2, is_running=$3,
+           battery_charge=$4, fuel=$5
+       WHERE user_id=$6`,
+      [newBalance.toFixed(10), newTemp.toFixed(2), stillRunning, batteryCharge, fuel, userId]
     );
 
     await client.query("COMMIT");
@@ -495,24 +529,26 @@ router.post("/admin/simulate-time", async (req, res) => {
     res.json({
       success: true,
       simulated: {
-        elapsedSeconds,                       // total window requested
-        runsForSeconds: parseFloat(runsForSeconds.toFixed(1)), // how long it actually ran
-        stoppedEarly:   runsForSeconds < elapsedSeconds,       // true if it stopped before window ended
+        elapsedSeconds,
+        runsForSeconds: parseFloat(runsForSeconds.toFixed(1)),
+        stoppedEarly:   runsForSeconds < elapsedSeconds,
         stopReason:     stopReasonOverheat ? "overheat"
                         : stopReasonFuel   ? "fuel_empty"
                         : isRunning        ? "still_running"
                         : "was_not_running",
-        overheatsAtSecond,  // null = did not overheat during window
-        wasRunning:   isRunning,
-        oldTemp:      temp,
-        newTemp:      parseFloat(newTemp.toFixed(2)),
-        overheated:   newTemp >= MAX_TEMP,
-        oldBalance:   parseFloat(m.current_balance),
-        newBalance:   parseFloat(newBalance.toFixed(10)),
-        earned:       parseFloat((newBalance - parseFloat(m.current_balance)).toFixed(10)),
-        oldFuel:      fuel,
-        newFuel,
-        isRunning:    stillRunning,
+        overheatsAtSecond,
+        wasRunning:       isRunning,
+        oldTemp:          temp,
+        newTemp:          parseFloat(newTemp.toFixed(2)),
+        overheated:       newTemp >= MAX_TEMP,
+        oldBalance:       parseFloat(m.current_balance),
+        newBalance:       parseFloat(newBalance.toFixed(10)),
+        earned:           parseFloat((newBalance - parseFloat(m.current_balance)).toFixed(10)),
+        oldFuel:          parseInt(m.fuel) || 0,
+        newFuel:          fuel,
+        oldBatteryCharge: parseInt(m.battery_charge) || 0,
+        newBatteryCharge: batteryCharge,
+        isRunning:        stillRunning,
       },
     });
   } catch (err) {
