@@ -11,6 +11,7 @@ import Inventory from "@/pages/Inventory";
 import Store from "@/pages/Store";
 import Leaderboard from "@/pages/Leaderboard";
 import WalletPage from "@/pages/Wallet";
+import Admin from "@/pages/Admin"; // Admin debug/cheat panel — only shown to the admin user
 import Layout from "@/components/Layout";
 
 const queryClient = new QueryClient({
@@ -46,6 +47,10 @@ function Router() {
       </Route>
       <Route path="/wallet">
         <Layout><WalletPage /></Layout>
+      </Route>
+      {/* Admin panel — server-side guard rejects non-admin users */}
+      <Route path="/admin">
+        <Layout><Admin /></Layout>
       </Route>
       <Route component={NotFound} />
     </Switch>

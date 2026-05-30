@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer, Wallet } from "lucide-react";
+import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer, Wallet, ShieldAlert } from "lucide-react";
 import { useGetWallet, getGetWalletQueryKey } from "@workspace/api-client-react";
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -9,20 +9,26 @@ export default function Layout({ children }: { children: ReactNode }) {
     query: { enabled: !!localStorage.getItem("userId"), queryKey: getGetWalletQueryKey() },
   });
 
+  // isAdmin is stored in localStorage at login — the server sets it based on ADMIN_USERNAME env var.
+  const isAdmin = localStorage.getItem("isAdmin") === "true";
+
   const logout = () => {
     localStorage.removeItem("userId");
     localStorage.removeItem("username");
+    localStorage.removeItem("isAdmin");
     setLocation("/");
   };
 
   const navItems = [
-    { href: "/game",        icon: Gamepad2, label: "Game"      },
-    { href: "/craft",       icon: Hammer,   label: "Craft"     },
-    { href: "/miner",       icon: Server,   label: "Miner"     },
-    { href: "/wallet",      icon: Wallet,   label: "Wallet"    },
-    { href: "/inventory",   icon: Backpack, label: "Items"     },
-    { href: "/store",       icon: Store,    label: "Store"     },
-    { href: "/leaderboard", icon: Trophy,   label: "Board"     },
+    { href: "/game",        icon: Gamepad2,    label: "Game"      },
+    { href: "/craft",       icon: Hammer,      label: "Craft"     },
+    { href: "/miner",       icon: Server,      label: "Miner"     },
+    { href: "/wallet",      icon: Wallet,      label: "Wallet"    },
+    { href: "/inventory",   icon: Backpack,    label: "Items"     },
+    { href: "/store",       icon: Store,       label: "Store"     },
+    { href: "/leaderboard", icon: Trophy,      label: "Board"     },
+    // Admin panel only visible to the admin user — hidden from normal players
+    ...(isAdmin ? [{ href: "/admin", icon: ShieldAlert, label: "Admin" }] : []),
   ];
 
   return (

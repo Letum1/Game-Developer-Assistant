@@ -1,9 +1,26 @@
+// ============================================================
+// auth.ts — Login and registration routes
+//
+// Auth model: SHA-256 hashed passwords stored in PostgreSQL.
+// The userId is returned on success and the client stores it in
+// localStorage, sending it as x-user-id on every subsequent request.
+//
+// Admin detection: if the registered/logged-in username matches
+// the ADMIN_USERNAME env var (default "admin"), the response
+// includes isAdmin: true so the frontend can show the admin panel.
+// ============================================================
+
 import { Router, type IRouter } from "express";
 import crypto from "crypto";
 import { pool } from "../lib/db-pool";
 import { RegisterBody, LoginBody } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+// Admin username is read from env so it can be changed without a redeploy.
+// Default "admin" is fine for local dev; set ADMIN_USERNAME in Replit Secrets
+// if you want a less obvious callsign in production.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "admin";
 
 router.post("/auth/register", async (req, res) => {
   const parsed = RegisterBody.safeParse(req.body);
@@ -36,7 +53,13 @@ router.post("/auth/register", async (req, res) => {
       );
     }
 
-    res.json({ success: true, userId: user.id, username: user.username });
+    // Include isAdmin flag so the frontend can show the admin panel
+    res.json({
+      success: true,
+      userId: user.id,
+      username: user.username,
+      isAdmin: user.username === ADMIN_USERNAME,
+    });
   } catch {
     res.status(400).json({ error: "Username already taken" });
   }
@@ -60,7 +83,13 @@ router.post("/auth/login", async (req, res) => {
       return;
     }
     const user = result.rows[0];
-    res.json({ success: true, userId: user.id, username: user.username });
+    // Include isAdmin flag so the frontend can unlock the admin panel
+    res.json({
+      success: true,
+      userId: user.id,
+      username: user.username,
+      isAdmin: user.username === ADMIN_USERNAME,
+    });
   } catch (err) {
     req.log.error({ err }, "Login error");
     res.status(500).json({ error: "Login failed" });

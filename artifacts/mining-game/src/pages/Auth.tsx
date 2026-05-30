@@ -51,6 +51,9 @@ export default function Auth() {
           if (data.success) {
             localStorage.setItem("userId", data.userId.toString());
             localStorage.setItem("username", data.username);
+            // Store admin flag so Layout can show/hide the admin nav link.
+            // The server sets isAdmin based on the ADMIN_USERNAME env var.
+            localStorage.setItem("isAdmin", data.isAdmin ? "true" : "false");
             setLocation("/game");
           } else {
             toast({ title: "Login Failed", variant: "destructive" });
@@ -66,6 +69,7 @@ export default function Auth() {
           if (data.success) {
             localStorage.setItem("userId", data.userId.toString());
             localStorage.setItem("username", data.username);
+            localStorage.setItem("isAdmin", data.isAdmin ? "true" : "false");
             setLocation("/game");
           } else {
             toast({ title: "Registration Failed", variant: "destructive" });
