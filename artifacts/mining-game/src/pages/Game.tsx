@@ -1055,7 +1055,11 @@ function drawWaterSplash(ctx: CanvasRenderingContext2D, bx: number, by: number, 
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
-export default function Game() {
+// Props passed from the /game/:worldName route in App.tsx.
+// worldName is the Growtopia-style world name (e.g. "START", "FARM").
+interface GameProps { worldName: string; }
+
+export default function Game({ worldName }: GameProps) {
   // ── Auth — stored in localStorage after login ────────────────────────────
   const userId  = localStorage.getItem("userId");
   const username = localStorage.getItem("username") ?? "Player";
@@ -1072,8 +1076,9 @@ export default function Game() {
   const [midH, setMidH] = useState<number>(0); // px height for the canvas row
 
   // ── Server data hooks ────────────────────────────────────────────────────
-  const { data: world, refetch: refetchWorld } = useGetWorld("start", {
-    query: { enabled: !!userId, queryKey: getGetWorldQueryKey("start") },
+  // worldName comes from the route param — dynamic Growtopia-style multi-world
+  const { data: world, refetch: refetchWorld } = useGetWorld(worldName, {
+    query: { enabled: !!userId, queryKey: getGetWorldQueryKey(worldName) },
   });
   const { data: wallet, refetch: refetchWallet } = useGetWallet({
     query: { enabled: !!userId, queryKey: getGetWalletQueryKey() },
@@ -1180,9 +1185,12 @@ export default function Game() {
     return Math.max(0, 1 - s.alpha / 0.38) > 0.15;
   });
 
-  // ── World expand state ────────────────────────────────────────────────────
-  // expandBusy: true while the server call is in flight (disables button)
-  const [expandBusy, setExpandBusy] = useState(false);
+  // ── Player position persistence ───────────────────────────────────────────
+  // savedPosRef is populated by the position-fetch effect below.
+  // The spawn effect reads it once (when physRef.current.spawned is false) to
+  // resume the player at their last location instead of the surface of column 5.
+  const savedPosRef = useRef<{ x: number; y: number } | null>(null);
+
   const [chatMsgs,      setChatMsgs]      = useState<{ username: string; message: string }[]>([]);
   const [chatInput,     setChatInput]     = useState("");
   // Zoom display state (just for showing zoom% in the UI)
@@ -1234,15 +1242,26 @@ export default function Game() {
     if (!world) return;
     worldRef.current = world.blockData;
 
-    // First load only: find an air cell in column 5 to spawn the player
+    // First load only: resume at saved position or fall back to surface of column 5.
+    // The server embeds savedPosition in the world response so no extra round-trip is needed.
     if (!physRef.current.spawned) {
-      const bd = world.blockData;
-      let spawnY = 0;
-      for (let y = 0; y < bd.length; y++) {
-        if (bd[y][5] === "air") { spawnY = y; break; }
+      // Cast: savedPosition is not in the OpenAPI type but the server always returns it
+      const saved = (world as unknown as { savedPosition?: { x: number; y: number } | null })
+        .savedPosition;
+      if (saved) {
+        // Resume exactly where the player left off last time
+        physRef.current.px = saved.x;
+        physRef.current.py = saved.y;
+      } else {
+        // First visit — find the topmost air cell in column 5 (just left of centre)
+        const bd = world.blockData;
+        let spawnY = 0;
+        for (let y = 0; y < bd.length; y++) {
+          if (bd[y][5] === "air") { spawnY = y; break; }
+        }
+        physRef.current.py = spawnY * BS;
+        physRef.current.px = 5 * BS + (BS - PW) / 2;
       }
-      physRef.current.py = spawnY * BS;
-      physRef.current.px = 5 * BS + (BS - PW) / 2;
       physRef.current.spawned = true;
     }
 
@@ -1327,43 +1346,27 @@ export default function Game() {
   }, []);
 
   // ════════════════════════════════════════════════════════════════════════
-  // expandWorld — POST /api/world/expand to buy 5 more columns for 200 gems.
-  // Uses a plain fetch (not the generated API client) since we added this route
-  // after the codegen was run. refetchWorld() pulls the new, wider blockData.
+  // Effect: autosave player position every 10 s + once on unmount.
+  // The server stores (x, y) per (user, world) so the next visit resumes here.
+  // Position is sent as world-pixel coordinates (same units as physRef.px/py).
   // ════════════════════════════════════════════════════════════════════════
-  const expandWorld = useCallback(async () => {
-    if (expandBusy) return;
-    setExpandBusy(true);
-    try {
-      const res = await fetch("/api/world/expand", {
+  useEffect(() => {
+    if (!userId || !worldName) return;
+
+    const savePosition = () => {
+      const { px, py } = physRef.current;
+      fetch(`/api/world/${encodeURIComponent(worldName)}/position`, {
         method:  "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-user-id":    userId.toString(),
-        },
-        body: JSON.stringify({ worldName: "start" }),
-      });
-      const data = await res.json() as { success: boolean; error?: string; message?: string; newWidth?: number };
-      if (data.success) {
-        toast({
-          title:       "🗺 WORLD EXPANDED",
-          description: `${data.message} — scroll right to explore!`,
-          className:   "bg-black border-primary text-primary font-mono text-xs",
-        });
-        refetchWorld();   // fetch the new wider blockData from server
-      } else {
-        toast({
-          title:       "EXPAND FAILED",
-          description: data.error ?? "Unknown error",
-          variant:     "destructive",
-        });
-      }
-    } catch {
-      toast({ title: "EXPAND FAILED", description: "Server unreachable", variant: "destructive" });
-    } finally {
-      setExpandBusy(false);
-    }
-  }, [expandBusy, userId, toast, refetchWorld, refetchWallet]);
+        headers: { "Content-Type": "application/json", "x-user-id": userId },
+        body:    JSON.stringify({ x: px, y: py }),
+      }).catch(() => {/* best-effort — ignore network errors */});
+    };
+
+    // Periodic autosave
+    const intervalId = setInterval(savePosition, 10_000);
+    // Final save when the player navigates away or closes the tab
+    return () => { clearInterval(intervalId); savePosition(); };
+  }, [userId, worldName]);
 
   // ── Send chat message ─────────────────────────────────────────────────────
   const sendChat = () => {
@@ -2244,7 +2247,7 @@ export default function Game() {
         return;
       }
       gameAction.mutate(
-        { data: { actionType: "refuel", worldName: "start", x: bx, y: by } },
+        { data: { actionType: "refuel", worldName, x: bx, y: by } },
         {
           onSuccess: (data) => {
             if ((data as { success?: boolean }).success) {
@@ -2300,7 +2303,7 @@ export default function Game() {
       const plantKey = `${bx},${by}`;
       saplingTimersRef.current.set(plantKey, Date.now());
       gameAction.mutate(
-        { data: { actionType: "plant" as never, worldName: "start", x: bx, y: by } },
+        { data: { actionType: "plant" as never, worldName, x: bx, y: by } },
         {
           onSuccess: (data) => {
             if (!(data as { success?: boolean }).success) {
@@ -2331,7 +2334,7 @@ export default function Game() {
       worldRef.current = updated;
 
       gameAction.mutate(
-        { data: { actionType: "place", worldName: "start", x: bx, y: by, placeBlock: selectedBlock } },
+        { data: { actionType: "place", worldName, x: bx, y: by, placeBlock: selectedBlock } },
         {
           onSuccess: (data) => {
             if (data.success) {
@@ -2396,7 +2399,7 @@ export default function Game() {
       worldRef.current = updated;
 
       gameAction.mutate(
-        { data: { actionType: "break", worldName: "start", x: bx, y: by } },
+        { data: { actionType: "break", worldName, x: bx, y: by } },
         {
           onSuccess: (data) => {
             pendingBreakRef.current = false;
@@ -2450,7 +2453,7 @@ export default function Game() {
         if (by > 0 && updated[by - 1]?.[bx] === "air") updated[by - 1][bx] = "block_oak_log";
         worldRef.current = updated;
         gameAction.mutate(
-          { data: { actionType: "grow" as never, worldName: "start", x: bx, y: by } },
+          { data: { actionType: "grow" as never, worldName, x: bx, y: by } },
           {
             onSuccess: () => refetchWorld(),
             onError:   () => { worldRef.current = bd; },
@@ -2580,20 +2583,14 @@ export default function Game() {
             <span className="text-primary font-bold">{wallet?.gems ?? 0} 💎</span>
           </div>
 
-          {/* Expand World button — costs 200 gems to add 5 more columns ──── */}
-          {/* Visible once player has mined a bit (wallet exists) */}
+          {/* Current world name badge — replaces the old single-world expand button.
+               Clicking it navigates back to WorldSelect so the player can switch worlds. */}
           <button
-            onClick={expandWorld}
-            disabled={expandBusy || (wallet?.gems ?? 0) < 200}
-            title="Spend 200 💎 to add 5 more columns to your world"
-            className={`px-2 py-1 rounded border font-mono text-[10px] font-bold uppercase transition-all ${
-              (wallet?.gems ?? 0) >= 200
-                ? "border-primary/50 text-primary bg-primary/10 hover:bg-primary/20 cursor-pointer"
-                : "border-border/30 text-muted-foreground/40 cursor-not-allowed"
-            } ${expandBusy ? "animate-pulse" : ""}`}
+            onClick={() => { history.back(); }}
+            className="hidden sm:block px-2 py-1 rounded border border-primary/30 font-mono text-[10px] font-bold uppercase text-primary/70 hover:border-primary hover:text-primary transition-colors max-w-[90px] truncate"
+            title={`Current world: ${worldName} — click to switch`}
           >
-            {expandBusy ? "..." : "⛏+5 cols"}
-            <span className="block text-[8px] leading-none mt-0.5 opacity-70">200 💎</span>
+            🌍 {worldName}
           </button>
 
           {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) ──
@@ -3041,7 +3038,7 @@ export default function Game() {
                 updated[by][bx] = "air";
                 worldRef.current = updated;
                 gameAction.mutate(
-                  { data: { actionType: "break", worldName: "start", x: bx, y: by } },
+                  { data: { actionType: "break", worldName, x: bx, y: by } },
                   {
                     onSuccess: () => { setStructurePopup(null); refetchWorld(); refetchInventory(); },
                     onError:   () => { worldRef.current = bd; },
@@ -3053,7 +3050,7 @@ export default function Game() {
                 // Server validates the target block is a generator_block before accepting.
                 const { bx, by } = structurePopup;
                 gameAction.mutate(
-                  { data: { actionType: "refuel", worldName: "start", x: bx, y: by } },
+                  { data: { actionType: "refuel", worldName, x: bx, y: by } },
                   {
                     onSuccess: (data) => {
                       if ((data as { success?: boolean }).success) {

@@ -4,3 +4,4 @@ export * from "./miners";
 export * from "./inventories";
 export * from "./worlds";
 export * from "./active_tasks";
+export * from "./player_positions";
