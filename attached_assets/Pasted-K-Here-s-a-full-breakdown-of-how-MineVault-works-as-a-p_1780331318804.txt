@@ -1,0 +1,78 @@
+K
+
+Here's a full breakdown of how MineVault works as a player, including all the earn rates from the actual code:
+
+How MineVault Works
+Getting Started
+Register a callsign (username) and access code (password). You'll spawn in a 2D world with a free Wood Pickaxe and some oak seeds. The world is shared with other players — you're all mining the same map.
+
+Mining Blocks → Earning Gems
+Click/tap blocks to break them. Each hit depletes a block's durability, and when it breaks you earn gems (currency) and window points (leaderboard score):
+Block	Gems	Points	Resource Drop
+Grass	1	8	30% oak seed
+Dirt	1	10	15% oak seed
+Rock	2	12	—
+Lava	5	30	50% obsidian
+Iron ore	3	20	100% raw iron
+Gold ore	10	50	100% raw gold
+Diamond	25	100	100% raw diamond
+Oak log	2	5	50% oak seed bonus
+Pickaxe tiers speed up how fast you break blocks:
+Pickaxe	Mining Speed	How to Get
+Wood	1× (starter)	Free on first login
+Stone	1.8×	Craft (5 oak wood) or 80 gems
+Iron	2.8×	Craft or 200 gems
+Gold	4.5×	Craft or 400 gems
+Diamond	7×	Craft or 800 gems
+Anti-cheat note: If you break more than 120 blocks per minute, you'll hit a Wizard Challenge — a quick CAPTCHA to prove you're not a bot. Over 50 actions/window drops rewards to 50%, over 100 drops them to 10%.
+
+Trees & Farming
+Plant oak seeds on dirt/grass to grow trees. Break logs for oak wood (used in crafting pickaxes) and bonus seeds. Trees take ~15 seconds to grow.
+
+Crafting (Workbench Page)
+Raw resources you mine can be crafted into tools and machine parts:
+	•	Stone Pickaxe — 5 oak wood
+	•	Iron Pickaxe — 3 oak wood + 3 raw iron
+	•	Gold Pickaxe — 5 raw iron + 2 raw gold
+	•	Diamond Pickaxe — 3 raw gold + 1 raw diamond
+	•	Machine Core — 5 raw iron + 2 raw gold + 1 raw diamond
+	•	Solar Panel Block — 2 raw iron + 1 raw gold
+	•	Data Cable — 1 raw iron → gives 3
+	•	Battery Block — 3 raw iron + 1 raw gold
+	•	Generator Block — 5 raw iron + 2 raw gold + 1 raw diamond
+	•	Mining Rig (ASIC) — 3 raw iron + 1 raw gold
+	•	Cooling Fan — 2 raw iron → gives 2
+	•	Data Center Rig (one-time unlock) — 8 raw iron + 5 raw gold + 2 raw diamond
+
+Passive Income — The Data Miner
+This is the main "earn while offline" system. Here's the path:
+	1.	Craft a Data Center Rig (unlocks the Miner dashboard)
+	2.	Craft and place machine blocks in the world to build a rig cluster:
+	•	Machine Core — the brain (required)
+	•	Mining Rig blocks — each one = 1 TH of compute, needs 1 power unit
+	•	Solar Panel — daytime-only power (1 unit each)
+	•	Battery Block — stores solar energy so the rig runs at night
+	•	Generator Block — diesel-powered, always-on (2 units, needs Diesel Can fuel)
+	•	Data Cable — connects blocks across gaps
+	•	Cooling Fan — each fan reduces heat by 2.5°C/hour (4 fans = never overheats)
+Passive income rates (sats/day) by active rig count:
+Active Mining Rigs	Sats per Day
+1	1
+2	2
+3	5
+4	8
+5	12
+6	17
+7	22
+8	27
+9 (max)	30
+Important: "Active rigs" = the number of rigs that have power. If you have 5 rigs but only 3 solar panels, only 3 are active. At night, solar goes offline — you need batteries or a generator to keep earning 24/7.
+Temperature system: The miner heats up 8.33°C/hour while running. At 100°C it stops earning until you apply a Water Bucket or Thermal Paste to cool it down. Each Cooling Fan reduces the rise by 2.5°C/hour (4 fans = zero net heat gain).
+
+Revenue Pool (Leaderboard)
+Every 3 hours, a simulated ad revenue pool pays out to active players based on their window_points share. The more blocks you mine, the bigger your slice of the pool. Check the Leaderboard page to see the countdown and your share.
+
+Day/Night Cycle
+The sky runs on a shared 15-minute real-time cycle (all players see the same sky). Solar panels only work when the sun is up (~38% of each cycle = ~5.7 minutes of full power). The rest of the time you need batteries or generators to keep the rig alive.
+
+Short version: Mine → earn gems → craft better tools → mine faster → unlock Data Miner → build a rig → earn passive income while offline. The deeper you dig, the richer the ores
