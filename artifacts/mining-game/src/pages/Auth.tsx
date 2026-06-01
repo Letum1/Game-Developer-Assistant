@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { TerminalSquare } from "lucide-react";
+import { ApiError } from "@workspace/api-client-react";
 
 export default function Auth() {
   const [, setLocation] = useLocation();
@@ -15,6 +16,8 @@ export default function Auth() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [checking, setChecking] = useState(true);
+  // Client-side validation error shown inline below the fields
+  const [validationError, setValidationError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const loginMutation = useLogin();
@@ -39,9 +42,33 @@ export default function Auth() {
       });
   }, [setLocation]);
 
+  // Clear validation error whenever the user switches mode or edits fields
+  useEffect(() => {
+    setValidationError(null);
+  }, [isLogin, username, password]);
+
+  // Extract a human-readable message from an API error response
+  function extractErrorMessage(err: unknown): string {
+    if (err instanceof ApiError) {
+      const data = err.data as Record<string, unknown> | null;
+      if (data && typeof data.error === "string") return data.error;
+    }
+    return null as unknown as string;
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || !password) return;
+    setValidationError(null);
+
+    // Client-side validation to give instant feedback before hitting the server
+    if (username.length < 3) {
+      setValidationError("Callsign must be at least 3 characters.");
+      return;
+    }
+    if (password.length < 6) {
+      setValidationError("Access code must be at least 6 characters.");
+      return;
+    }
 
     const payload = { data: { username, password } };
 
@@ -49,34 +76,41 @@ export default function Auth() {
       loginMutation.mutate(payload, {
         onSuccess: (data) => {
           if (data.success) {
-            localStorage.setItem("userId", data.userId.toString());
+            localStorage.setItem("userId", String(data.userId));
             localStorage.setItem("username", data.username);
             // Store admin flag so Layout can show/hide the admin nav link.
             // The server sets isAdmin based on the ADMIN_USERNAME env var.
-            localStorage.setItem("isAdmin", data.isAdmin ? "true" : "false");
+            // isAdmin is not in the generated type but the server always sends it.
+            const anyData = data as Record<string, unknown>;
+            localStorage.setItem("isAdmin", anyData.isAdmin ? "true" : "false");
             setLocation("/game");
           } else {
             toast({ title: "Login Failed", variant: "destructive" });
           }
         },
-        onError: () => {
-          toast({ title: "Login Failed", variant: "destructive" });
+        onError: (err) => {
+          // Show the server's own error message when available (e.g. "Invalid credentials")
+          const msg = extractErrorMessage(err) ?? "Login failed. Check your callsign and access code.";
+          setValidationError(msg);
         }
       });
     } else {
       registerMutation.mutate(payload, {
         onSuccess: (data) => {
           if (data.success) {
-            localStorage.setItem("userId", data.userId.toString());
+            localStorage.setItem("userId", String(data.userId));
             localStorage.setItem("username", data.username);
-            localStorage.setItem("isAdmin", data.isAdmin ? "true" : "false");
+            const anyData = data as Record<string, unknown>;
+            localStorage.setItem("isAdmin", anyData.isAdmin ? "true" : "false");
             setLocation("/game");
           } else {
             toast({ title: "Registration Failed", variant: "destructive" });
           }
         },
-        onError: () => {
-          toast({ title: "Registration Failed", variant: "destructive" });
+        onError: (err) => {
+          // Show the server's own error message when available (e.g. "Username already taken")
+          const msg = extractErrorMessage(err) ?? "Registration failed. Please try a different callsign.";
+          setValidationError(msg);
         }
       });
     }
@@ -130,8 +164,13 @@ export default function Auth() {
                   onChange={(e) => setUsername(e.target.value)}
                   className="bg-black/50 border-primary/20 focus-visible:border-primary focus-visible:ring-primary/50 font-mono"
                   placeholder="HACKER_99"
+                  minLength={3}
                   required
                 />
+                {/* Show requirement hint during registration */}
+                {!isLogin && (
+                  <p className="text-xs text-muted-foreground">Min. 3 characters</p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password" className="uppercase tracking-widest text-xs text-muted-foreground">Access Code</Label>
@@ -142,9 +181,21 @@ export default function Auth() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="bg-black/50 border-primary/20 focus-visible:border-primary focus-visible:ring-primary/50 font-mono tracking-widest"
                   placeholder="••••••••"
+                  minLength={6}
                   required
                 />
+                {/* Show requirement hint during registration */}
+                {!isLogin && (
+                  <p className="text-xs text-muted-foreground">Min. 6 characters</p>
+                )}
               </div>
+
+              {/* Inline error banner — shows validation or server errors */}
+              {validationError && (
+                <div className="rounded border border-red-500/50 bg-red-950/40 px-3 py-2 text-xs text-red-400 uppercase tracking-wide">
+                  ⚠ {validationError}
+                </div>
+              )}
             </CardContent>
             <CardFooter className="flex flex-col space-y-4">
               <Button
@@ -152,7 +203,9 @@ export default function Auth() {
                 className="w-full bg-primary hover:bg-primary/80 text-primary-foreground font-black tracking-widest uppercase transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] hover:shadow-[0_0_25px_rgba(34,197,94,0.6)] border border-primary"
                 disabled={loginMutation.isPending || registerMutation.isPending}
               >
-                {isLogin ? "Execute Login" : "Execute Register"}
+                {loginMutation.isPending || registerMutation.isPending
+                  ? "Processing..."
+                  : isLogin ? "Execute Login" : "Execute Register"}
               </Button>
               <button
                 type="button"
