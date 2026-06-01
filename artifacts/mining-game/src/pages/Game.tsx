@@ -2596,27 +2596,31 @@ export default function Game() {
             <span className="block text-[8px] leading-none mt-0.5 opacity-70">200 💎</span>
           </button>
 
-          {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) */}
-          <button
-            onClick={() => { setShowMinerWin(s => !s); setShowInvWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
-            className={`p-1.5 rounded border transition-colors ${showMinerWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
-            title="Toggle Miner window"
-          ><Server className="w-3.5 h-3.5" /></button>
-          <button
-            onClick={() => { setShowInvWin(s => !s); setShowMinerWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
-            className={`p-1.5 rounded border transition-colors ${showInvWin ? "border-white text-white bg-white/10" : "border-border text-muted-foreground hover:text-white"}`}
-            title="Toggle Inventory window"
-          ><Package className="w-3.5 h-3.5" /></button>
-          <button
-            onClick={() => { setShowStoreWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowLeadWin(false); }}
-            className={`p-1.5 rounded border transition-colors ${showStoreWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
-            title="Toggle Store window"
-          ><ShoppingCart className="w-3.5 h-3.5" /></button>
-          <button
-            onClick={() => { setShowLeadWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowStoreWin(false); }}
-            className={`p-1.5 rounded border transition-colors ${showLeadWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
-            title="Toggle Leaderboard window"
-          ><Trophy className="w-3.5 h-3.5" /></button>
+          {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) ──
+               Hidden on mobile — those pages are reachable via the bottom nav tab bar.
+               Shown on sm+ where floating overlays make sense alongside the canvas.  */}
+          <div className="hidden sm:flex items-center gap-1.5">
+            <button
+              onClick={() => { setShowMinerWin(s => !s); setShowInvWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
+              className={`p-1.5 rounded border transition-colors ${showMinerWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+              title="Toggle Miner window"
+            ><Server className="w-3.5 h-3.5" /></button>
+            <button
+              onClick={() => { setShowInvWin(s => !s); setShowMinerWin(false); setShowStoreWin(false); setShowLeadWin(false); }}
+              className={`p-1.5 rounded border transition-colors ${showInvWin ? "border-white text-white bg-white/10" : "border-border text-muted-foreground hover:text-white"}`}
+              title="Toggle Inventory window"
+            ><Package className="w-3.5 h-3.5" /></button>
+            <button
+              onClick={() => { setShowStoreWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowLeadWin(false); }}
+              className={`p-1.5 rounded border transition-colors ${showStoreWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+              title="Toggle Store window"
+            ><ShoppingCart className="w-3.5 h-3.5" /></button>
+            <button
+              onClick={() => { setShowLeadWin(s => !s); setShowMinerWin(false); setShowInvWin(false); setShowStoreWin(false); }}
+              className={`p-1.5 rounded border transition-colors ${showLeadWin ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground hover:text-accent"}`}
+              title="Toggle Leaderboard window"
+            ><Trophy className="w-3.5 h-3.5" /></button>
+          </div>
 
           {/* Chat toggle */}
           <button

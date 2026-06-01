@@ -77,12 +77,25 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col relative overflow-hidden min-w-0">
-        {/* Mobile Header */}
+        {/* Mobile Header — title left, gems + logout right */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-sidebar/80 backdrop-blur z-10 shrink-0">
           <h1 className="text-lg font-black text-primary drop-shadow-[0_0_8px_rgba(34,197,94,0.5)] uppercase tracking-tighter">
             MINEVAULT
           </h1>
-          {wallet && <span className="font-bold text-primary text-sm">{wallet.gems} G</span>}
+          <div className="flex items-center gap-3">
+            {wallet && (
+              <span className="font-bold text-primary text-sm">{wallet.gems} 💎</span>
+            )}
+            {/* Logout button — visible on mobile only; desktop uses the sidebar button */}
+            <button
+              onClick={logout}
+              className="flex items-center gap-1 text-muted-foreground hover:text-destructive transition-colors p-1"
+              title="Logout"
+              aria-label="Logout"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
         {/* overflow-hidden + flex flex-col so that children using h-full work correctly.
