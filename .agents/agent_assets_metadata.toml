@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "-v7PpOKmynLVe1nxuLMUd"
+uri = "file://WHITE_SCREEN_FIX.md"
+type = "text"
+title = "White Screen Fix Guide for Replit"
