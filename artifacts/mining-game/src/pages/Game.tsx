@@ -1219,6 +1219,13 @@ export default function Game({ worldName }: GameProps) {
   // players can hide it if it covers important screen real-estate on mobile.
   const [showMinimap, setShowMinimap] = useState(true);
 
+  // ── World lock state ──────────────────────────────────────────────────────
+  // worldLocked: true means only the owner can break/place blocks.
+  // worldOwnerId: the numeric user_id of whoever locked the world (null = no owner).
+  // Both are populated from the GET /api/world/:name response in the world-sync effect.
+  const [worldLocked,  setWorldLocked]  = useState(false);
+  const [worldOwnerId, setWorldOwnerId] = useState<number | null>(null);
+
   // ════════════════════════════════════════════════════════════════════════
   // Effect: keep isDay in sync with the live getSky calculation.
   // Polling every 3 seconds is more than frequent enough for a 15-min cycle.
@@ -1241,6 +1248,13 @@ export default function Game({ worldName }: GameProps) {
   useEffect(() => {
     if (!world) return;
     worldRef.current = world.blockData;
+
+    // ── Sync world lock & owner from server response ───────────────────────────
+    // The server always returns locked + ownerId in GET /api/world/:name.
+    // Cast through unknown because the generated OpenAPI types don't include them yet.
+    const wAny = world as unknown as { locked?: boolean; ownerId?: number | null };
+    setWorldLocked(wAny.locked ?? false);
+    setWorldOwnerId(wAny.ownerId ?? null);
 
     // First load only: resume at saved position or fall back to surface of column 5.
     // The server embeds savedPosition in the world response so no extra round-trip is needed.
@@ -2212,6 +2226,19 @@ export default function Game({ worldName }: GameProps) {
       return;
     }
 
+    // ── WORLD LOCK CHECK ─────────────────────────────────────────────────────
+    // If the world is locked and the current player is NOT the owner, block all
+    // break/place actions. Visiting is still allowed (read-only exploration).
+    const currentNumericId = parseInt(userId ?? "0") || 0;
+    if (worldLocked && currentNumericId !== (worldOwnerId ?? -1)) {
+      toast({
+        title: "🔒 WORLD LOCKED",
+        description: "This world is private. Only the owner can build here.",
+        className: "bg-black border-yellow-500 text-yellow-400 font-mono text-xs",
+      });
+      return;
+    }
+
     // ── USE ITEM HANDLERS ─────────────────────────────────────────────────────
     // When a use-item is equipped (thermal_paste / water_bucket / diesel_can),
     // the click applies the item effect and never breaks the block.
@@ -2583,14 +2610,14 @@ export default function Game({ worldName }: GameProps) {
             <span className="text-primary font-bold">{wallet?.gems ?? 0} 💎</span>
           </div>
 
-          {/* Current world name badge — replaces the old single-world expand button.
-               Clicking it navigates back to WorldSelect so the player can switch worlds. */}
+          {/* Current world name badge — clicking navigates back to WorldSelect. */}
+          {/* Lock icon shown when the world is locked (visible to all players).  */}
           <button
             onClick={() => { history.back(); }}
-            className="hidden sm:block px-2 py-1 rounded border border-primary/30 font-mono text-[10px] font-bold uppercase text-primary/70 hover:border-primary hover:text-primary transition-colors max-w-[90px] truncate"
-            title={`Current world: ${worldName} — click to switch`}
+            className="hidden sm:flex items-center gap-1 px-2 py-1 rounded border border-primary/30 font-mono text-[10px] font-bold uppercase text-primary/70 hover:border-primary hover:text-primary transition-colors max-w-[110px] truncate"
+            title={`Current world: ${worldName}${worldLocked ? " (LOCKED)" : ""} — click to switch`}
           >
-            🌍 {worldName}
+            {worldLocked ? "🔒" : "🌍"} {worldName}
           </button>
 
           {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) ──

@@ -66,6 +66,8 @@ const MAX_LEVEL = 9; // effective speed ceiling (MINER_RATES[9] is the peak rate
 // ── Anti-cheat ad constants ───────────────────────────────────────────────────
 // Must match REQUIRED_WATCH_SECONDS in monetization.ts
 const AD_WATCH_SECONDS = 15;
+// Daily cap for Overcharge Drill — must match DRILL_BOOST_MAX_PER_DAY in game-constants.ts
+const DRILL_BOOST_MAX = 3;
 
 export default function Miner() {
   const { data: miner, refetch } = useGetMiner();
@@ -233,14 +235,14 @@ export default function Miner() {
 
   // ── startRewardedAd — main entry point for any "Watch Ad" button ──────────
   //
-  // Key mobile fix: window.open() MUST be called synchronously inside a user
-  // gesture handler. Calling it inside an async callback (after await/fetch)
-  // causes mobile Safari to block it as a popup. So for gem_reward we open
-  // "about:blank" immediately, then navigate it to the real ad URL once the
-  // API responds. drill_boost and cool_down need no popup at all.
+  // ALL task types now open an Adsterra popup in the user-gesture context.
+  // window.open() MUST be synchronous — calling it after an await fails on
+  // mobile Safari because the user-gesture context has already expired.
   //
-  // Uses direct fetch() instead of the auto-generated hook so we can set the
-  // x-user-id header explicitly and handle errors with full control.
+  // Integrity levels:
+  //   gem_reward   — popup + 15s countdown + popup-close guard (full)
+  //   drill_boost  — popup + 15s countdown + popup-close guard (full, verified)
+  //   cool_down    — popup + 15s countdown, NO popup-close guard (simpler flow)
   const startRewardedAd = useCallback(async (type: "drill_boost" | "cool_down" | "gem_reward") => {
     const userId = localStorage.getItem("userId");
     if (!userId) {
@@ -248,20 +250,17 @@ export default function Miner() {
       return;
     }
 
-    // ── Step 1: For gem_reward, open popup SYNCHRONOUSLY before any await ──
+    // ── Step 1: Open Adsterra popup SYNCHRONOUSLY for ALL task types ─────────
     // This preserves the user-gesture context that mobile browsers require.
-    // For drill_boost / cool_down: no external popup is opened.
-    let popup: Window | null = null;
-    if (type === "gem_reward") {
-      popup = window.open("about:blank", "_blank", "width=800,height=600,scrollbars=yes");
-      if (!popup) {
-        toast({
-          title: "POPUP BLOCKED",
-          description: "Allow popups for this site in your browser settings, then try again.",
-          variant: "destructive",
-        });
-        return;
-      }
+    // We open "about:blank" now, then navigate to the real URL after the API call.
+    const popup = window.open("about:blank", "_blank", "width=800,height=600,scrollbars=yes");
+    if (!popup) {
+      toast({
+        title: "POPUP BLOCKED",
+        description: "Allow popups for this site in your browser settings, then try again.",
+        variant: "destructive",
+      });
+      return;
     }
 
     // ── Step 2: Call the server to create a timestamped task + get token ───
@@ -279,8 +278,7 @@ export default function Miner() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        // Close the pre-opened popup if the API call failed
-        popup?.close();
+        popup.close();
         toast({
           title: "REQUEST FAILED",
           description: data.error || "Could not start ad task. Try again.",
@@ -290,18 +288,14 @@ export default function Miner() {
         return;
       }
 
-      // ── Step 3: Navigate popup to real ad URL (gem_reward only) ──────────
-      // The popup was already opened as "about:blank" to satisfy iOS gesture
-      // requirements. Now we send it to the actual Adsterra Smartlink.
-      if (popup && !popup.closed) {
+      // ── Step 3: Navigate popup to the real Adsterra Smartlink ────────────
+      if (!popup.closed) {
         popup.location.href = data.adUrl || "https://example.com/ad";
-      } else {
-        popup = null; // popup closed between open and navigate — treat as no popup
       }
 
       // Store references for the countdown intervals
       adTokenRef.current    = data.token;
-      adWindowRef.current   = popup;        // null for drill_boost / cool_down
+      adWindowRef.current   = popup;
       adTimeLeftRef.current = AD_WATCH_SECONDS;
       adPausedRef.current   = false;
 
@@ -313,23 +307,20 @@ export default function Miner() {
       setAdRequesting(false);
 
       // ── Countdown interval — ticks every 1 second ─────────────────────────
-      // Skips ticks while adPausedRef is true (tab hidden).
       adCountdownRef.current = setInterval(() => {
         if (adPausedRef.current) return;
-
         adTimeLeftRef.current -= 1;
         setAdTimeLeft(adTimeLeftRef.current);
-
         if (adTimeLeftRef.current <= 0) {
           clearAdTimers();
           completeAd();
         }
       }, 1000);
 
-      // ── Popup-integrity interval — only for gem_reward ────────────────────
-      // Polls every 400 ms; cancels reward if player closes the ad window early.
-      // Not needed for drill_boost / cool_down since they have no popup.
-      if (popup) {
+      // ── Popup-integrity interval — gem_reward and drill_boost only ─────────
+      // Cancels the reward if the player closes the popup before the timer ends.
+      // cool_down is intentionally simpler: closing the popup early is tolerated.
+      if (type !== "cool_down") {
         integrityCheckRef.current = setInterval(() => {
           if (adWindowRef.current && adWindowRef.current.closed) {
             clearAdTimers();
@@ -345,7 +336,7 @@ export default function Miner() {
       }
 
     } catch {
-      popup?.close();
+      popup.close();
       setAdRequesting(false);
       toast({ title: "NETWORK ERROR", description: "Could not reach the server.", variant: "destructive" });
     }
@@ -859,9 +850,8 @@ export default function Miner() {
             </CardContent>
           </Card>
 
-          {/* ── Monetization / Ad Actions ─────────────────────────────────── */}
-          {/* All three buttons funnel into startRewardedAd() which handles the  */}
-          {/* full anti-cheat flow described at the top of this file.            */}
+          {/* ── Sponsored Boosts / Ad Actions ─────────────────────────────── */}
+          {/* All buttons open an Adsterra popup + 15-second anti-cheat overlay. */}
           <Card className="border-accent/30 bg-accent/5">
             <CardHeader>
               <CardTitle className="text-accent uppercase text-sm tracking-widest flex items-center">
@@ -873,11 +863,42 @@ export default function Miner() {
             </CardHeader>
             <CardContent className="space-y-3">
 
-              {/* All 3 buttons disabled while overlay is active or a request is in flight */}
+              {/* ── Drill Boost Status ─────────────────────────────────────────
+                  Shown when an Overcharge Drill boost is currently active.
+                  Shows remaining boost time and daily usage counter.
+              ── */}
+              {(() => {
+                const am = anyMiner;
+                const isDrillBoosted  = am.isDrillBoosted  ?? false;
+                const drillBoostUntil = am.drillBoostUntil ? new Date(am.drillBoostUntil as string) : null;
+                const drillBoostToday = am.drillBoostToday ?? 0;
+                const usesLeft        = Math.max(0, DRILL_BOOST_MAX - drillBoostToday);
+                return (
+                  <>
+                    {isDrillBoosted && drillBoostUntil && (
+                      <div className="border border-cyan-500/60 bg-cyan-500/10 rounded p-2 flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-cyan-400 shrink-0 animate-pulse" />
+                        <div className="text-xs font-mono">
+                          <p className="text-cyan-400 font-bold uppercase tracking-widest text-[10px]">
+                            ⚡ Drill Overcharged — +50% Rate Active
+                          </p>
+                          <p className="text-muted-foreground text-[10px]">
+                            Expires {drillBoostUntil.toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-muted-foreground text-[10px] text-center">
+                      Overcharge uses today: <span className={usesLeft === 0 ? "text-destructive font-bold" : "text-primary font-bold"}>
+                        {drillBoostToday}/{DRILL_BOOST_MAX}
+                      </span>
+                    </p>
+                  </>
+                );
+              })()}
 
               {/* ── WATCH AD FOR GEMS ────────────────────────────────────────
-                  Opens Adsterra Smartlink popup (pre-opened synchronously to avoid
-                  mobile popup-blockers), runs 15s anti-cheat countdown → +50 gems.
+                  Opens Adsterra popup + full 15s anti-cheat countdown → +50 💎
               ── */}
               <Button
                 className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/60 hover:bg-yellow-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
@@ -893,31 +914,43 @@ export default function Miner() {
               </Button>
 
               {/* ── OVERCHARGE DRILL ─────────────────────────────────────────
-                  No external popup. Just 15s on-page wait → +10 gems +50 points.
+                  Opens Adsterra popup + full 15s anti-cheat countdown.
+                  Reward: +50% rate for 30 min, +5 💎. Limit: 3/day.
               ── */}
               <Button
-                className="w-full bg-accent/10 text-accent border border-accent hover:bg-accent hover:text-black uppercase tracking-widest h-12"
+                className="w-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/60 hover:bg-cyan-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
                 onClick={() => startRewardedAd("drill_boost")}
-                disabled={adOverlayActive || adRequesting}
+                disabled={adOverlayActive || adRequesting || ((anyMiner.drillBoostToday ?? 0) >= DRILL_BOOST_MAX && (anyMiner.isDrillBoosted !== undefined))}
               >
-                <Zap className="w-4 h-4 mr-2" /> Overcharge Drill (+10 💎)
+                <div className="flex items-center gap-2 text-sm font-black">
+                  <Zap className="w-4 h-4" /> Overcharge Drill
+                </div>
+                <div className="text-[10px] opacity-70 font-normal normal-case tracking-normal">
+                  15s ad → +50% rate for 30 min (+5 💎) • verified
+                </div>
               </Button>
 
-              {/* ── FLASH COOL DOWN ──────────────────────────────────────────
-                  No external popup. Just 15s on-page wait → resets miner temp to 0.
+              {/* ── FLUSH COOL DOWN ──────────────────────────────────────────
+                  Opens Adsterra popup + 15s wait → resets miner temperature.
+                  Popup-close guard is intentionally omitted (simpler flow).
               ── */}
               <Button
-                className="w-full bg-accent/10 text-accent border border-accent hover:bg-accent hover:text-black uppercase tracking-widest h-12"
+                className="w-full bg-blue-500/10 text-blue-400 border border-blue-500/60 hover:bg-blue-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
                 onClick={() => startRewardedAd("cool_down")}
                 disabled={adOverlayActive || adRequesting}
               >
-                <Snowflake className="w-4 h-4 mr-2" /> Flash Cool Down (Reset Temp)
+                <div className="flex items-center gap-2 text-sm font-black">
+                  <Snowflake className="w-4 h-4" /> Flush Cool Down
+                </div>
+                <div className="text-[10px] opacity-70 font-normal normal-case tracking-normal">
+                  15s ad → Temperature reset to 0°C
+                </div>
               </Button>
 
-              {/* Anti-cheat info note */}
+              {/* Anti-cheat note */}
               <p className="text-muted-foreground text-[10px] leading-relaxed text-center pt-1">
-                Keep the ad window open and stay on this tab during the countdown.
-                Closing the ad early or switching tabs will pause / cancel your reward.
+                Keep the ad window open and stay on this tab. Switching tabs pauses
+                the timer; closing the ad early cancels the reward (Overcharge Drill only).
               </p>
             </CardContent>
           </Card>

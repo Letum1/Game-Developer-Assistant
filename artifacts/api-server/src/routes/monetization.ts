@@ -28,6 +28,11 @@ import {
   VerifyMonetizationTaskHeader,
   VerifyMonetizationTaskBody,
 } from "@workspace/api-zod";
+import {
+  DRILL_BOOST_MULTIPLIER,
+  DRILL_BOOST_DURATION_MS,
+  DRILL_BOOST_MAX_PER_DAY,
+} from "../lib/game-constants";
 
 const router: IRouter = Router();
 
@@ -158,13 +163,46 @@ router.post("/monetization/verify-task", async (req, res) => {
     let message = "";
 
     if (taskType === "drill_boost") {
-      // Mining drill overcharge: +10 gems bonus, +50 leaderboard window points
+      // ── Overcharge Drill — apply 1.5× rate boost for 30 minutes ─────────────
+      // Check and reset the daily counter if needed
+      const minerRes = await pool.query(
+        "SELECT drill_boost_today, drill_boost_reset FROM miners WHERE user_id = $1",
+        [userId]
+      );
+      const miner = minerRes.rows[0];
+      const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const lastReset = miner?.drill_boost_reset
+        ? String(miner.drill_boost_reset).slice(0, 10)
+        : null;
+      const boostToday = lastReset === today ? (parseInt(miner?.drill_boost_today) || 0) : 0;
+
+      if (boostToday >= DRILL_BOOST_MAX_PER_DAY) {
+        res.status(400).json({
+          success: false,
+          reward: "none",
+          message: `Daily limit reached (${DRILL_BOOST_MAX_PER_DAY} overcharges/day). Come back tomorrow!`,
+        });
+        return;
+      }
+
+      // Apply the boost: sets drill_boost_until 30 minutes in the future
+      const boostUntil = new Date(Date.now() + DRILL_BOOST_DURATION_MS);
       await pool.query(
-        "UPDATE wallets SET gems = gems + 10, window_points = window_points + 50 WHERE user_id = $1",
+        `UPDATE miners
+         SET drill_boost_until  = $2,
+             drill_boost_today  = $3,
+             drill_boost_reset  = $4
+         WHERE user_id = $1`,
+        [userId, boostUntil, boostToday + 1, today]
+      );
+      // Small gem bonus for watching the ad
+      await pool.query(
+        "UPDATE wallets SET gems = gems + 5, window_points = window_points + 50 WHERE user_id = $1",
         [userId]
       );
       reward  = "drill_boost";
-      message = "Drill overcharged! +10 gems, +50 points";
+      message = `Drill overcharged! +50% rate for 30 min. +5 💎 (${boostToday + 1}/${DRILL_BOOST_MAX_PER_DAY} today)`;
+      void DRILL_BOOST_MULTIPLIER; // used via import, silences linter
 
     } else if (taskType === "cool_down") {
       // Emergency cooling: reset miner temperature so it can run again immediately

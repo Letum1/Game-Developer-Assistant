@@ -113,15 +113,21 @@ function generateSeededGrid(worldName: string): string[][] {
 
 // ============================================================
 // GET /worlds
-// Returns an array of all world names so the WorldSelect UI can show
-// active worlds that players can jump into.
+// Returns all worlds with name, lock status, and ownerId so the
+// WorldSelect UI can show active worlds and indicate which are locked.
 // ============================================================
 router.get("/worlds", async (req, res) => {
   try {
-    const result = await pool.query<{ name: string }>(
-      "SELECT name FROM worlds ORDER BY id ASC LIMIT 100"
+    const result = await pool.query<{ name: string; locked: boolean; owner_id: number | null }>(
+      "SELECT name, locked, owner_id FROM worlds ORDER BY id ASC LIMIT 100"
     );
-    res.json({ worlds: result.rows.map((r) => r.name) });
+    res.json({
+      worlds: result.rows.map((r) => ({
+        name:    r.name,
+        locked:  r.locked,
+        ownerId: r.owner_id,
+      })),
+    });
   } catch (err) {
     req.log.error({ err }, "World list error");
     res.status(500).json({ error: "Failed to list worlds" });
@@ -152,10 +158,10 @@ router.get("/world/:name", async (req, res) => {
 
   try {
     // ── Load or create world ─────────────────────────────────────────────────
-    let worldRow: { id: number; name: string; owner_id: number | null; block_data: string[][] };
+    let worldRow: { id: number; name: string; owner_id: number | null; locked: boolean; block_data: string[][] };
 
     const existing = await pool.query(
-      "SELECT id, name, owner_id, block_data FROM worlds WHERE name = $1",
+      "SELECT id, name, owner_id, locked, block_data FROM worlds WHERE name = $1",
       [name]
     );
 
@@ -211,12 +217,125 @@ router.get("/world/:name", async (req, res) => {
       id:            worldRow.id,
       name:          worldRow.name,
       ownerId:       worldRow.owner_id,
+      locked:        (worldRow as any).locked ?? false,
       blockData:     worldRow.block_data,
       savedPosition, // null → client spawns at surface; {x,y} → client resumes position
     });
   } catch (err) {
     req.log.error({ err }, "World fetch error");
     res.status(500).json({ error: "World error" });
+  }
+});
+
+// ============================================================
+// POST /world/:name/lock
+// Locks a world so only the owner can break/place blocks.
+// Costs 1 World Lock (or Diamond Lock) item from the player's inventory.
+// The caller automatically becomes the world owner if they created it first.
+// ============================================================
+router.post("/world/:name/lock", async (req, res) => {
+  const headerParsed = GetWorldHeader.safeParse(req.headers);
+  if (!headerParsed.success) { res.status(401).json({ error: "Missing user id" }); return; }
+
+  const userId    = parseInt(headerParsed.data["x-user-id"]);
+  const worldName = req.params.name as string;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Fetch world — must exist
+    const worldRes = await client.query(
+      "SELECT id, owner_id, locked FROM worlds WHERE name = $1 FOR UPDATE",
+      [worldName]
+    );
+    if (worldRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "World not found" });
+      return;
+    }
+    const world = worldRes.rows[0];
+
+    // If the world already has an owner and it's not this player, reject
+    if (world.owner_id !== null && world.owner_id !== userId) {
+      await client.query("ROLLBACK");
+      res.status(403).json({ error: "Only the world owner can lock this world." });
+      return;
+    }
+
+    if (world.locked) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "World is already locked." });
+      return;
+    }
+
+    // Consume one World Lock or Diamond Lock from inventory
+    const lockItem = await client.query(
+      `SELECT item_id, quantity FROM inventories
+       WHERE user_id = $1 AND item_id IN ('world_lock','diamond_lock') AND quantity > 0
+       ORDER BY item_id ASC LIMIT 1`,
+      [userId]
+    );
+    if (lockItem.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "You need a World Lock (500 💎) from the Store to lock this world." });
+      return;
+    }
+    const lockRow = lockItem.rows[0];
+    if (lockRow.quantity === 1) {
+      await client.query("DELETE FROM inventories WHERE user_id=$1 AND item_id=$2", [userId, lockRow.item_id]);
+    } else {
+      await client.query("UPDATE inventories SET quantity=quantity-1 WHERE user_id=$1 AND item_id=$2", [userId, lockRow.item_id]);
+    }
+
+    // Lock the world and assign owner
+    await client.query(
+      "UPDATE worlds SET locked=TRUE, owner_id=$2 WHERE id=$1",
+      [world.id, userId]
+    );
+    await client.query("COMMIT");
+    res.json({ success: true, locked: true, message: "World locked! Only you can build here now." });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    req.log.error({ err }, "World lock error");
+    res.status(500).json({ error: "Failed to lock world" });
+  } finally {
+    client.release();
+  }
+});
+
+// ============================================================
+// POST /world/:name/unlock
+// Unlocks a world. Only the owner can unlock it.
+// The lock item is NOT refunded.
+// ============================================================
+router.post("/world/:name/unlock", async (req, res) => {
+  const headerParsed = GetWorldHeader.safeParse(req.headers);
+  if (!headerParsed.success) { res.status(401).json({ error: "Missing user id" }); return; }
+
+  const userId    = parseInt(headerParsed.data["x-user-id"]);
+  const worldName = req.params.name as string;
+
+  try {
+    const worldRes = await pool.query(
+      "SELECT id, owner_id, locked FROM worlds WHERE name = $1",
+      [worldName]
+    );
+    if (worldRes.rows.length === 0) {
+      res.status(404).json({ error: "World not found" }); return;
+    }
+    const world = worldRes.rows[0];
+    if (world.owner_id !== userId) {
+      res.status(403).json({ error: "Only the world owner can unlock it." }); return;
+    }
+    if (!world.locked) {
+      res.status(400).json({ error: "World is not locked." }); return;
+    }
+    await pool.query("UPDATE worlds SET locked=FALSE WHERE id=$1", [world.id]);
+    res.json({ success: true, locked: false, message: "World unlocked. Everyone can build here again." });
+  } catch (err) {
+    req.log.error({ err }, "World unlock error");
+    res.status(500).json({ error: "Failed to unlock world" });
   }
 });
 

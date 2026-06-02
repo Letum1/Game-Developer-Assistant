@@ -60,7 +60,9 @@ async function requireAdmin(req: Request, res: Response, next: () => void) {
 }
 
 // Apply the guard to every route in this router
-router.use("/admin", requireAdmin as Parameters<typeof router.use>[0]);
+// Cast to any: Express 5 middleware typings make router.use() picky about
+// overloads; the function signature is correct at runtime.
+router.use("/admin", requireAdmin as any);
 
 // ── GET /api/admin/users — list every player ──────────────────────────────
 // Returns id, username, gems, and miner level for a quick overview.

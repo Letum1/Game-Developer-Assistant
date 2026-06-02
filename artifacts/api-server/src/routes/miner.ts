@@ -19,6 +19,8 @@ import {
   FUEL_DRAIN_RATE,
   BATTERY_CHARGE_RATE,
   BATTERY_DRAIN_RATE,
+  DRILL_BOOST_MULTIPLIER,
+  DRILL_BOOST_MAX_PER_DAY,
   getDayFactor,
 } from "../lib/game-constants";
 
@@ -33,32 +35,41 @@ function minerRate(activeRigs: number): number {
 // Power sources are now separate:
 //   batteries / battery_charge — solar-charged night storage
 //   generators / fuel          — always-on diesel
+// Drill boost: if drill_boost_until is in the future, ratePerSecond is multiplied
+// by DRILL_BOOST_MULTIPLIER (1.5×) to represent the +0.5 TH overcharge effect.
 function formatMiner(m: Record<string, unknown>) {
   const rigCount      = parseInt(m.level          as string) || 0;
   const fanCount      = parseInt(m.fans           as string) || 0;
   const solarPanels   = parseInt(m.solar_panels   as string) || 0;
-  const batteries     = parseInt(m.batteries      as string) || 0;  // battery_block count
-  const batteryCharge = parseInt(m.battery_charge as string) || 0;  // stored solar energy
-  const generators    = parseInt(m.generators     as string) || 0;  // generator_block count
-  const fuelLevel     = parseInt(m.fuel           as string) || 0;  // diesel tank
+  const batteries     = parseInt(m.batteries      as string) || 0;
+  const batteryCharge = parseInt(m.battery_charge as string) || 0;
+  const generators    = parseInt(m.generators     as string) || 0;
+  const fuelLevel     = parseInt(m.fuel           as string) || 0;
 
-  // Max power supply (all sources at full capacity, ignores current day/night).
-  // Actual active power depends on time of day + charge/fuel levels.
   const powerSupply  = solarPanels + batteries + generators;
   const activeRigs   = Math.min(rigCount, powerSupply);
   const nextUpgradeCost   = MINER_UPGRADE_COSTS[rigCount] ?? null;
   const nextUpgradePoints = UPGRADE_POINTS_REQUIRED[rigCount] ?? null;
 
+  // ── Drill boost state ──────────────────────────────────────────────────────
+  const drillBoostUntil = m.drill_boost_until
+    ? new Date(m.drill_boost_until as string)
+    : null;
+  const now           = new Date();
+  const isDrillBoosted = drillBoostUntil !== null && drillBoostUntil > now;
+  const boostMult     = isDrillBoosted ? DRILL_BOOST_MULTIPLIER : 1.0;
+  const drillBoostToday = parseInt(m.drill_boost_today as string) || 0;
+
   return {
     userId: m.user_id,
-    level:        rigCount,   // kept for API compat; semantically = total rig count
+    level:        rigCount,
     rigCount,
     fanCount,
     solarPanels,
-    batteries,                // battery_block count
-    batteryCharge,            // current stored energy (0–500)
-    generators,               // generator_block count
-    fuel: fuelLevel,          // diesel tank level (0–500)
+    batteries,
+    batteryCharge,
+    generators,
+    fuel: fuelLevel,
     powerSupply,
     powerDemand: rigCount,
     activeRigs,
@@ -68,9 +79,15 @@ function formatMiner(m: Record<string, unknown>) {
     isRunning: m.is_running,
     lastMaintenanceAt: (m.last_maintenance_at as Date).toISOString(),
     lastTickAt: (m.last_tick_at as Date).toISOString(),
-    ratePerSecond: minerRate(activeRigs),
+    // Apply boost multiplier so front-end sees the boosted rate
+    ratePerSecond: minerRate(activeRigs) * boostMult,
     nextUpgradeCost,
     nextUpgradePoints,
+    // Drill boost metadata for the dashboard
+    isDrillBoosted,
+    drillBoostUntil: drillBoostUntil?.toISOString() ?? null,
+    drillBoostToday,
+    drillBoostMaxPerDay: DRILL_BOOST_MAX_PER_DAY,
   };
 }
 
@@ -158,8 +175,18 @@ router.post("/miner/tick", async (req, res) => {
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
 
+    // ── Drill boost multiplier ───────────────────────────────────────────────
+    // If drill_boost_until is in the future, apply the 1.5× rate multiplier.
+    // The boost is transient: when it expires mid-tick, the multiplier still
+    // applies for the full tick (close enough for the ~30s tick interval).
+    const drillBoostUntilTick = m.drill_boost_until
+      ? new Date(m.drill_boost_until as string)
+      : null;
+    const isDrillBoosted = drillBoostUntilTick !== null && drillBoostUntilTick > now;
+    const boostMult = isDrillBoosted ? DRILL_BOOST_MULTIPLIER : 1.0;
+
     if (isRunning && elapsedSeconds > 0) {
-      newBalance += minerRate(activeRigs) * elapsedSeconds;
+      newBalance += minerRate(activeRigs) * boostMult * elapsedSeconds;
       const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
       newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }

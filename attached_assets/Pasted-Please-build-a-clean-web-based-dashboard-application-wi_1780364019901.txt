@@ -1,0 +1,23 @@
+Please build a clean, web-based dashboard application with an integrated, secure "Rewarded Ads" simulation feature using HTML, CSS, and Vanilla JavaScript. 
+
+The application needs to handle ad viewing interactions gracefully while preventing common user bypasses (like switching tabs or closing windows).
+
+Please include the following components and features:
+
+1. User Currency Dashboard:
+- Display a player profile card showing their currency balance (e.g., "Gems: 0").
+- An active "Watch Ad for Gems" trigger button.
+
+2. Ad Intercept & Display Logic:
+- When clicked, use `window.open` to launch a simulated target external link in a new window/popup container (representing an Adsterra ad redirect).
+- Simultaneously pull up a full screen loading overlay blocking interaction on the host page during the countdown.
+
+3. Complete Anti-Cheat System:
+- Implement a 15-second countdown timer.
+- Tab-Focus Interception: Use the Document Visibility API to check if the user navigates away or hides the active window. If the tab goes hidden, immediately halt the countdown timer and output a visual warning across the overlay stating the timer is frozen until they return.
+- Early Dismissal Guard: Implement an interval tracking routine running every few hundred milliseconds checking if the opened ad popup window was manually terminated (`window.closed`). If closed before the countdown finishes, clear all runtime intervals, hide the overlay, reset parameters, and throw an explicit error message canceling the payout.
+
+4. Payout Integration:
+- Upon a validated countdown termination (reaching 0), safely shut down tracking loops, dim the overlay screens, update the user state balance, and throw a clear success state window. Provide neat placeholder comments within this sequence showing where an architectural fetch execution would call out to a backend/Firebase setup for validation.
+
+Deliver this inside an optimized, scannable single-file structure or modular setup (HTML/CSS/JS) with clean styling using a modern dark UI scheme.

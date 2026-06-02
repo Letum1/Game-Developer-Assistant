@@ -1,4 +1,4 @@
-import { pgTable, integer, numeric, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, integer, numeric, boolean, timestamp, date } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 export const minersTable = pgTable("miners", {
@@ -10,28 +10,24 @@ export const minersTable = pgTable("miners", {
   isRunning: boolean("is_running").default(true).notNull(),
   solarPanels: integer("solar_panels").default(0).notNull(),
 
-  // ── Power sources (now tracked separately) ────────────────────────────────
-  // batteries: count of battery_block pieces in the cluster.
-  //   - Charged by solar panels during the day.
-  //   - Discharge at night to keep rigs running. Drain from battery_charge pool.
+  // ── Power sources (tracked separately) ───────────────────────────────────
   batteries: integer("batteries").default(0).notNull(),
-  // battery_charge: current stored energy (0–500 units). Charged by solar,
-  //   drained at night to provide power. Separate from diesel fuel.
   batteryCharge: integer("battery_charge").default(100).notNull(),
-
-  // generators: count of generator_block pieces in the cluster.
-  //   - Diesel-powered; always on when fuel > 0, day OR night.
-  //   - Drain from the `fuel` (diesel) pool.
   generators: integer("generators").default(0).notNull(),
-  // fuel: diesel fuel for generator_block pieces (0–500 units).
-  //   Replenished by using a Diesel Can item in the game world.
   fuel: integer("fuel").default(100).notNull(),
 
-  // fans: number of fan_block pieces connected to the machine cluster.
-  // Each fan reduces the temperature rise rate in the miner tick.
+  // ── Cooling fans ─────────────────────────────────────────────────────────
   fans: integer("fans").default(0).notNull(),
   lastMaintenanceAt: timestamp("last_maintenance_at").defaultNow().notNull(),
   lastTickAt: timestamp("last_tick_at").defaultNow().notNull(),
+
+  // ── Overcharge Drill boost ────────────────────────────────────────────────
+  // drillBoostUntil: when set and in the future, ratePerSecond is multiplied by 1.5.
+  // drillBoostToday: number of times the drill has been boosted today.
+  // drillBoostReset: the calendar date when drillBoostToday was last reset.
+  drillBoostUntil: timestamp("drill_boost_until"),
+  drillBoostToday: integer("drill_boost_today").default(0).notNull(),
+  drillBoostReset: date("drill_boost_reset"),
 });
 
 export type Miner = typeof minersTable.$inferSelect;
