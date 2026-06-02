@@ -12,7 +12,7 @@
 // page or the Miner page.
 // ============================================================
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useGetWallet, useGetMiner, getGetWalletQueryKey, getGetMinerQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,6 +27,20 @@ export default function WalletPage() {
   const { toast }                    = useToast();
   const [isCollecting, setCollecting] = useState(false);
   const btcPrice                     = useBtcPrice();
+
+  // ── Adsterra Popunder — fires only when the player visits the Wallet page ──
+  // Injects the script tag dynamically so it doesn't run on every page in the app.
+  // Cleaned up on unmount so it doesn't stack if the player navigates back.
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://pl29614133.effectivecpmnetwork.com/b4/8f/7d/b48f7de69fdfe29e02092c3f75b57777.js";
+    script.async = true;
+    document.head.appendChild(script);
+    return () => {
+      // Remove script on page leave to avoid duplicate injections
+      document.head.removeChild(script);
+    };
+  }, []);
 
   const { data: wallet } = useGetWallet({
     query: { refetchInterval: 10000, queryKey: getGetWalletQueryKey() },

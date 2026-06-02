@@ -5,12 +5,26 @@
 // Desktop: full table with all columns.
 // ============================================================
 
+import { useEffect } from "react";
 import { useGetLeaderboard, useGetPoolStatus, getGetLeaderboardQueryKey, getGetPoolStatusQueryKey } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Trophy, Clock, DollarSign, Award } from "lucide-react";
 
 export default function Leaderboard() {
+  // ── Adsterra Popunder — fires only when the player visits the Leaderboard ──
+  // Injects the script dynamically so it doesn't run on every page in the app.
+  // Cleaned up on unmount so it doesn't stack if the player navigates back.
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://pl29614133.effectivecpmnetwork.com/b4/8f/7d/b48f7de69fdfe29e02092c3f75b57777.js";
+    script.async = true;
+    document.head.appendChild(script);
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, []);
+
   const { data: leaderboard } = useGetLeaderboard({
     query: { refetchInterval: 10000, queryKey: getGetLeaderboardQueryKey() },
   });
