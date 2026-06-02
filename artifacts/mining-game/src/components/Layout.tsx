@@ -99,16 +99,16 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {/* overflow-hidden + flex flex-col so that children using h-full work correctly.
-            pb-14 on mobile reserves the 56px bottom nav space above content.
-            pb-[114px] reserves space for both the ad banner (50px) and bottom nav (56px). */}
-        <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-[114px] md:pb-[50px]">
+        {/* Content area — reserves 116px on mobile (60px banner + 56px nav),
+            60px on desktop (banner only, no bottom nav). */}
+        <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-[116px] md:pb-[60px]">
           {children}
         </div>
 
-        {/* ── Ad Banner — shown on all pages, sits just above the mobile bottom nav ── */}
-        {/* On desktop it anchors to the bottom of the main content column. */}
-        <div className="absolute bottom-14 md:bottom-0 left-0 right-0 z-10">
+        {/* ── Ad Banner — fixed 60px strip just above the mobile bottom nav ─── */}
+        {/* z-10 keeps it above page content but below the nav (z-20).          */}
+        {/* On desktop it anchors to the very bottom of the content column.     */}
+        <div className="absolute bottom-14 md:bottom-0 left-0 right-0 z-10" style={{ height: 60 }}>
           <AdBanner />
         </div>
 
