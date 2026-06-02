@@ -12,7 +12,9 @@ export function Toaster() {
   const { toasts } = useToast()
 
   return (
-    <ToastProvider>
+    // Default duration: 1 500 ms — short enough to stay out of the way during gameplay.
+    // Individual toasts can override by passing a `duration` prop (e.g. reward toasts use 3 000 ms).
+    <ToastProvider duration={1500}>
       {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
           <Toast key={id} {...props}>

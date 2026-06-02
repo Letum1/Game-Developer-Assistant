@@ -14,10 +14,10 @@ const ToastViewport = React.forwardRef<
   <ToastPrimitives.Viewport
     ref={ref}
     className={cn(
-      // On mobile: sit above the bottom-nav bar (bottom-16 = 64px clears the 56px nav).
+      // On mobile: anchor to the TOP so toasts never cover the joystick / controls.
+      // A thin strip centred horizontally keeps it out of the action area.
       // On sm+: standard bottom-right corner placement.
-      // max-h-[40vh] prevents a single big toast from eating the whole screen.
-      "fixed bottom-16 z-[100] flex max-h-[40vh] w-full flex-col p-2 sm:bottom-0 sm:right-0 sm:p-4 sm:flex-col md:max-w-[420px]",
+      "fixed top-2 left-1/2 -translate-x-1/2 z-[100] flex max-h-[20vh] w-auto max-w-[92vw] flex-col gap-1 sm:top-auto sm:bottom-0 sm:right-0 sm:left-auto sm:translate-x-0 sm:p-4 sm:max-w-[420px]",
       className
     )}
     {...props}
@@ -26,9 +26,9 @@ const ToastViewport = React.forwardRef<
 ToastViewport.displayName = ToastPrimitives.Viewport.displayName
 
 const toastVariants = cva(
-  // p-3/pr-7 on mobile keeps the card slim; p-6/pr-8 on sm+ matches original sizing.
-  // Slide animation is always from-bottom now that the viewport is bottom-aligned.
-  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-md border p-3 pr-7 sm:space-x-4 sm:p-6 sm:pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-bottom-full",
+  // Mobile: pill-shaped strip with tight padding so it stays out of the game.
+  // Desktop (sm+): standard card sizing.
+  "group pointer-events-auto relative flex w-full items-center justify-between space-x-2 overflow-hidden rounded-full border px-3 py-1.5 pr-7 sm:rounded-md sm:space-x-4 sm:p-6 sm:pr-8 shadow-lg transition-all data-[swipe=cancel]:translate-x-0 data-[swipe=end]:translate-x-[var(--radix-toast-swipe-end-x)] data-[swipe=move]:translate-x-[var(--radix-toast-swipe-move-x)] data-[swipe=move]:transition-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[swipe=end]:animate-out data-[state=closed]:fade-out-80 data-[state=closed]:slide-out-to-top-full data-[state=open]:slide-in-from-top-full",
   {
     variants: {
       variant: {

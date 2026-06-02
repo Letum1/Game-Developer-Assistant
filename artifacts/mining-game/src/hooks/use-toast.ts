@@ -6,7 +6,10 @@ import type {
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+// How long (ms) to keep a dismissed toast in the DOM after its close animation.
+// 300ms is enough for the slide-out to finish; 1,000,000ms (old value) made
+// dismissed toasts linger in state for 16+ minutes.
+const TOAST_REMOVE_DELAY = 300
 
 type ToasterToast = ToastProps & {
   id: string
