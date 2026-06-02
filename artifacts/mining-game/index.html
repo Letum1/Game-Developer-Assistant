@@ -19,10 +19,11 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          ADSTERRA — Popunder
-         Fires a popunder ad on first user click. One per page.
+         async + defer so it NEVER blocks HTML parsing or React boot.
+         Fires a popunder on first user interaction after the page loads.
          Dashboard: beta.publishers.adsterra.com
     ═══════════════════════════════════════════════════════════════════ -->
-    <script src="https://pl29614133.effectivecpmnetwork.com/b4/8f/7d/b48f7de69fdfe29e02092c3f75b57777.js"></script>
+    <script async defer src="https://pl29614133.effectivecpmnetwork.com/b4/8f/7d/b48f7de69fdfe29e02092c3f75b57777.js"></script>
 
     <style>
       /* Base dark background — applied before any JS runs to prevent white flash */
@@ -133,11 +134,11 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          ADSTERRA — Social Bar
+         async so it never blocks React or page interactivity.
          Sticky floating bar at the bottom of the screen.
-         Insert right above the closing </body> tag.
          Dashboard: beta.publishers.adsterra.com
     ═══════════════════════════════════════════════════════════════════ -->
-    <script src="https://pl29614136.effectivecpmnetwork.com/b1/e9/e2/b1e9e232d69d8182e2912c14598aa953.js"></script>
+    <script async src="https://pl29614136.effectivecpmnetwork.com/b1/e9/e2/b1e9e232d69d8182e2912c14598aa953.js"></script>
 
   </body>
 </html>
