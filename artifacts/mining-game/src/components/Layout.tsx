@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer, Wallet, ShieldAlert } from "lucide-react";
 import { useGetWallet, getGetWalletQueryKey } from "@workspace/api-client-react";
+import AdBanner from "./AdBanner";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
@@ -99,9 +100,16 @@ export default function Layout({ children }: { children: ReactNode }) {
         </header>
 
         {/* overflow-hidden + flex flex-col so that children using h-full work correctly.
-            pb-14 on mobile reserves the 56px bottom nav space above content. */}
-        <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-14 md:pb-0">
+            pb-14 on mobile reserves the 56px bottom nav space above content.
+            pb-[114px] reserves space for both the ad banner (50px) and bottom nav (56px). */}
+        <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-[114px] md:pb-[50px]">
           {children}
+        </div>
+
+        {/* ── Ad Banner — shown on all pages, sits just above the mobile bottom nav ── */}
+        {/* On desktop it anchors to the bottom of the main content column. */}
+        <div className="absolute bottom-14 md:bottom-0 left-0 right-0 z-10">
+          <AdBanner />
         </div>
 
         {/* Mobile Bottom Tab */}

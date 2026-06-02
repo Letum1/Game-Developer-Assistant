@@ -19,10 +19,10 @@
  *      Server independently checks ≥15 s elapsed — client cannot skip this.
  *   7. Reward is applied server-side and the token row is deleted (one-time use).
  *
- * Task types:
- *   gem_reward  — "Watch Ad for Gems" → +50 gems, +25 leaderboard points
- *   drill_boost — "Overcharge Drill"  → +10 gems, +50 leaderboard points
- *   cool_down   — "Flash Cool Down"   → reset miner temperature to 0
+ * Task types (all use the same full popup + 15s anti-cheat flow):
+ *   gem_reward  — "Visit Ads for Gems"    → +100 gems, +25 leaderboard points
+ *   drill_boost — "Overcharge Drill"      → +0.50 TH boost 30 min, +100 gems, +50 points
+ *   cool_down   — "Flush Cool Down"       → temp reset to 0, +100 gems, +25 points
  */
 
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -339,23 +339,22 @@ export default function Miner() {
         }
       }, 1000);
 
-      // ── Popup-integrity interval — gem_reward and drill_boost only ─────────
+      // ── Popup-integrity interval — all task types ────────────────────────
       // Cancels the reward if the player closes the popup before the timer ends.
-      // cool_down is intentionally simpler: closing the popup early is tolerated.
-      if (type !== "cool_down") {
-        integrityCheckRef.current = setInterval(() => {
-          if (adWindowRef.current && adWindowRef.current.closed) {
-            clearAdTimers();
-            setAdOverlayActive(false);
-            adTokenRef.current = null;
-            toast({
-              title: "AD CLOSED EARLY",
-              description: "Keep the ad window open for 15 seconds. No reward issued.",
-              variant: "destructive",
-            });
-          }
-        }, 400);
-      }
+      // All three task types (gem_reward, drill_boost, cool_down) now use this guard
+      // since they all share the same full anti-cheat flow.
+      integrityCheckRef.current = setInterval(() => {
+        if (adWindowRef.current && adWindowRef.current.closed) {
+          clearAdTimers();
+          setAdOverlayActive(false);
+          adTokenRef.current = null;
+          toast({
+            title: "AD CLOSED EARLY",
+            description: "Keep the ad window open for 15 seconds. No reward issued.",
+            variant: "destructive",
+          });
+        }
+      }, 400);
 
     } catch {
       popup.close();
@@ -881,7 +880,7 @@ export default function Miner() {
                 <Zap className="w-4 h-4 mr-2" /> Sponsored Boosts
               </CardTitle>
               <CardDescription className="text-muted-foreground text-xs uppercase tracking-widest">
-                Watch a short ad to earn rewards
+                Visit ads to earn rewards — 100 💎 per visit
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -920,8 +919,8 @@ export default function Miner() {
                 );
               })()}
 
-              {/* ── WATCH AD FOR GEMS ────────────────────────────────────────
-                  Opens Adsterra popup + full 15s anti-cheat countdown → +50 💎
+              {/* ── VISIT ADS FOR GEMS ───────────────────────────────────────
+                  Opens Adsterra popup + full 15s anti-cheat countdown → +100 💎
               ── */}
               <Button
                 className="w-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/60 hover:bg-yellow-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
@@ -929,16 +928,16 @@ export default function Miner() {
                 disabled={adOverlayActive || adRequesting}
               >
                 <div className="flex items-center gap-2 text-sm font-black">
-                  <Gem className="w-4 h-4" /> Watch Ad for Gems
+                  <Gem className="w-4 h-4" /> Visit Ads for Gems
                 </div>
                 <div className="text-[10px] opacity-70 font-normal normal-case tracking-normal">
-                  15-second ad → +50 💎 Gems
+                  15s visit → +100 💎 Gems
                 </div>
               </Button>
 
               {/* ── OVERCHARGE DRILL ─────────────────────────────────────────
                   Opens Adsterra popup + full 15s anti-cheat countdown.
-                  Reward: +50% rate for 30 min, +5 💎. Limit: 3/day.
+                  Reward: +0.50 TH boost for 30 min, +100 💎. Limit: 3/day.
               ── */}
               <Button
                 className="w-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/60 hover:bg-cyan-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
@@ -949,13 +948,13 @@ export default function Miner() {
                   <Zap className="w-4 h-4" /> Overcharge Drill
                 </div>
                 <div className="text-[10px] opacity-70 font-normal normal-case tracking-normal">
-                  15s ad → +50% rate for 30 min (+5 💎) • verified
+                  15s visit → +0.50 TH boost for 30 min • +100 💎
                 </div>
               </Button>
 
               {/* ── FLUSH COOL DOWN ──────────────────────────────────────────
-                  Opens Adsterra popup + 15s wait → resets miner temperature.
-                  Popup-close guard is intentionally omitted (simpler flow).
+                  Opens Adsterra popup + full 15s anti-cheat countdown.
+                  Reward: temperature reset to 0°C, +100 💎.
               ── */}
               <Button
                 className="w-full bg-blue-500/10 text-blue-400 border border-blue-500/60 hover:bg-blue-500 hover:text-black uppercase tracking-widest h-14 flex-col gap-1"
@@ -966,14 +965,14 @@ export default function Miner() {
                   <Snowflake className="w-4 h-4" /> Flush Cool Down
                 </div>
                 <div className="text-[10px] opacity-70 font-normal normal-case tracking-normal">
-                  15s ad → Temperature reset to 0°C
+                  15s visit → Temp reset to 0°C • +100 💎
                 </div>
               </Button>
 
               {/* Anti-cheat note */}
               <p className="text-muted-foreground text-[10px] leading-relaxed text-center pt-1">
                 Keep the ad window open and stay on this tab. Switching tabs pauses
-                the timer; closing the ad early cancels the reward (Overcharge Drill only).
+                the timer; closing the ad early cancels the reward.
               </p>
             </CardContent>
           </Card>

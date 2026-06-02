@@ -198,32 +198,36 @@ router.post("/monetization/verify-task", async (req, res) => {
          WHERE user_id = $1`,
         [userId, boostUntil, boostToday + 1, today]
       );
-      // Small gem bonus for watching the ad
+      // Gem reward for visiting the ad — +100 gems, +50 leaderboard points
       await pool.query(
-        "UPDATE wallets SET gems = gems + 5, window_points = window_points + 50 WHERE user_id = $1",
+        "UPDATE wallets SET gems = gems + 100, window_points = window_points + 50 WHERE user_id = $1",
         [userId]
       );
       reward  = "drill_boost";
-      message = `Drill overcharged! +50% rate for 30 min. +5 💎 (${boostToday + 1}/${DRILL_BOOST_MAX_PER_DAY} today)`;
+      message = `Drill overcharged! +0.50 TH boost for 30 min. +100 💎 (${boostToday + 1}/${DRILL_BOOST_MAX_PER_DAY} today)`;
       void DRILL_BOOST_MULTIPLIER; // used via import, silences linter
 
     } else if (taskType === "cool_down") {
-      // Emergency cooling: reset miner temperature so it can run again immediately
+      // Emergency cooling: reset miner temperature + reward 100 gems for visiting the ad
       await pool.query(
         "UPDATE miners SET temperature = 0, is_running = true WHERE user_id = $1",
         [userId]
       );
+      await pool.query(
+        "UPDATE wallets SET gems = gems + 100, window_points = window_points + 25 WHERE user_id = $1",
+        [userId]
+      );
       reward  = "cool_down";
-      message = "Server cooled down! Temperature reset to 0";
+      message = "Server cooled down! Temperature reset to 0. +100 💎 credited!";
 
     } else if (taskType === "gem_reward") {
-      // Dedicated "Watch Ad for Gems" reward: +50 gems, +25 leaderboard window points
+      // "Visit Ads for Gems" reward: +100 gems, +25 leaderboard window points
       await pool.query(
-        "UPDATE wallets SET gems = gems + 50, window_points = window_points + 25 WHERE user_id = $1",
+        "UPDATE wallets SET gems = gems + 100, window_points = window_points + 25 WHERE user_id = $1",
         [userId]
       );
       reward  = "gem_reward";
-      message = "+50 Gems credited to your wallet!";
+      message = "+100 Gems credited to your wallet!";
     }
 
     // Delete the task row so the token cannot be reused (one-time claim)
