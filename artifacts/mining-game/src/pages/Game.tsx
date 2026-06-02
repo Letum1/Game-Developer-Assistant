@@ -49,6 +49,45 @@ const PH         = 36;    // Player hitbox height (px)
 // 15 minutes = 900,000 ms. t=0 midnight → t=0.5 noon → t=1 midnight again.
 const DAY_MS = 900_000;
 
+// ─── Clock HUD helper ────────────────────────────────────────────────────────
+// Maps the 15-minute real-world wall-clock cycle onto a 24-hour in-game day.
+// Returns the current in-game time string, phase label, emoji, and a
+// human-readable countdown to the next phase transition.
+//
+// Phase breakpoints (mirror getSky):
+//   NIGHT  t ∈ [0.78, 1.0] ∪ [0.0, 0.22)   — dark sky, no solar
+//   DAWN   t ∈ [0.22, 0.30)                  — sky lightening, sunrise
+//   DAY    t ∈ [0.30, 0.68)                  — full sunlight, solar active
+//   DUSK   t ∈ [0.68, 0.78)                  — sky darkening, sunset
+function getClockState(now: number) {
+  const t = (now % DAY_MS) / DAY_MS;
+
+  // Map t → in-game 24h time (t=0 = 00:00 midnight, t=0.5 = 12:00 noon)
+  const gameHours = t * 24;
+  const h         = Math.floor(gameHours);
+  const m         = Math.floor((gameHours - h) * 60);
+  const timeStr   = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+  // Determine current phase and when the next transition starts (in t units)
+  let phase:      string;
+  let phaseEmoji: string;
+  let nextT:      number; // t value at which the NEXT phase begins
+  if      (t < 0.22) { phase = "NIGHT"; phaseEmoji = "🌙"; nextT = 0.22; }
+  else if (t < 0.30) { phase = "DAWN";  phaseEmoji = "🌅"; nextT = 0.30; }
+  else if (t < 0.68) { phase = "DAY";   phaseEmoji = "☀";  nextT = 0.68; }
+  else if (t < 0.78) { phase = "DUSK";  phaseEmoji = "🌇"; nextT = 0.78; }
+  else               { phase = "NIGHT"; phaseEmoji = "🌙"; nextT = 1.22; } // dawn next cycle
+
+  // Real seconds until the next phase transition
+  const tUntil   = nextT > t ? nextT - t : nextT + 1 - t;
+  const secsLeft = Math.round(tUntil * (DAY_MS / 1000));
+  const mLeft    = Math.floor(secsLeft / 60);
+  const sLeft    = secsLeft % 60;
+  const countdown = mLeft > 0 ? `${mLeft}m ${sLeft}s` : `${sLeft}s`;
+
+  return { timeStr, phase, phaseEmoji, countdown };
+}
+
 // ─── Mining hit counts per block type ────────────────────────────────────────
 // Growtopia mechanic: click N times to break a block.
 // Machine blocks take 1 hit so players can rearrange their rigs easily.
@@ -150,6 +189,8 @@ const BLOCK_LABELS: Record<string, string> = {
   diesel_can:        "Diesel",     // equip + tap generator or battery to refuel
   thermal_paste:     "Paste",      // equip + tap machine_core to reduce temperature
   water_bucket:      "H₂O",        // equip + tap machine_core for cooling flush
+  // ── Clock item (shows clock HUD overlay when in inventory) ───────────────
+  in_game_clock:     "Clock",      // crafted tool — activates in-game clock HUD
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -2543,6 +2584,21 @@ export default function Game({ worldName }: GameProps) {
   // Checked against live inventory so it updates immediately after a purchase.
   const hasDieselCan = inventory.some((i) => i.itemId === "diesel_can" && i.quantity > 0);
 
+  // ── In-Game Clock — active when the player has the craftable clock item ──
+  // When hasClock is true, a clock HUD widget is rendered below the solar badge.
+  const hasClock = inventory.some((i) => i.itemId === "in_game_clock" && i.quantity > 0);
+
+  // Clock state ticks every second (only while the clock is in inventory).
+  const [clockState, setClockState] = useState(() => getClockState(Date.now()));
+
+  // Effect: update clock every second while the player owns the clock item.
+  // Stops the interval when hasClock becomes false to save CPU.
+  useEffect(() => {
+    if (!hasClock) return;
+    const id = setInterval(() => setClockState(getClockState(Date.now())), 1000);
+    return () => clearInterval(id);
+  }, [hasClock]);
+
   // Helper: shared style for on-screen control buttons
   const ctrlBtn = "select-none touch-none transition-all active:scale-90";
 
@@ -2746,6 +2802,33 @@ export default function Game({ worldName }: GameProps) {
           }`}>
             {isDay ? "☀ SOLAR ACTIVE" : "🌙 NIGHT — no solar"}
           </div>
+
+          {/* ── In-Game Clock HUD (top-right, below solar badge) ─────────── */}
+          {/* Visible only when the player has crafted the In-Game Clock item */}
+          {/* Shows: in-game 24h time, current phase, real-time countdown to  */}
+          {/* the next phase transition (Night→Dawn→Day→Dusk→Night…).         */}
+          {hasClock && (
+            <div className={`absolute top-10 right-2 z-10 px-2 py-1.5 rounded border font-mono bg-black/80 flex flex-col items-end gap-0.5 ${
+              clockState.phase === "DAY"   ? "border-yellow-500/60 text-yellow-200" :
+              clockState.phase === "DAWN"  ? "border-orange-400/60 text-orange-200" :
+              clockState.phase === "DUSK"  ? "border-orange-500/60 text-orange-300" :
+                                             "border-blue-500/40   text-blue-200"
+            }`}>
+              {/* Row 1: emoji + in-game time */}
+              <div className="flex items-center gap-1 text-[11px] font-bold leading-none">
+                <span>{clockState.phaseEmoji}</span>
+                <span>{clockState.timeStr}</span>
+              </div>
+              {/* Row 2: current phase label */}
+              <div className="text-[8px] tracking-widest opacity-80 leading-none">
+                {clockState.phase}
+              </div>
+              {/* Row 3: countdown to next phase */}
+              <div className="text-[8px] opacity-60 leading-none">
+                {clockState.countdown} left
+              </div>
+            </div>
+          )}
 
           {/* ── MINIMAP OVERLAY — bottom-right corner ────────────────────── */}
           {/* The internal canvas is 1px per block; CSS scales it up to      */}
