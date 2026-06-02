@@ -28,6 +28,11 @@ export const minersTable = pgTable("miners", {
   drillBoostUntil: timestamp("drill_boost_until"),
   drillBoostToday: integer("drill_boost_today").default(0).notNull(),
   drillBoostReset: date("drill_boost_reset"),
+
+  // ── One-machine-core-per-player enforcement ───────────────────────────────
+  // Set to true when the player places a machine_core; cleared when they break it.
+  // Server rejects any attempt to place a second machine_core while this is true.
+  hasMachineCore: boolean("has_machine_core").default(false).notNull(),
 });
 
 export type Miner = typeof minersTable.$inferSelect;

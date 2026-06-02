@@ -67,6 +67,8 @@ export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?
   lamp_block:          { gems: 0,  points: 0                                          },
   battery_block:       { gems: 0,  points: 0                                          },
   generator_block:     { gems: 0,  points: 0                                          },
+  // Clock block returns itself so players can rearrange/recover it
+  clock_block:         { gems: 0,  points: 0                                          },
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
@@ -79,6 +81,7 @@ export const MACHINE_BLOCK_TYPES = new Set([
   "lamp_block",
   "battery_block",
   "generator_block",
+  "clock_block",         // in-game clock — shows day/night time when powered
 ]);
 
 // ─── Miner passive income rates (sats/second) indexed by active rig count ─────
@@ -183,7 +186,7 @@ export const ITEM_DISPLAY_NAMES: Record<string, string> = {
   pickaxe_iron:      "Iron Pickaxe",
   pickaxe_gold:      "Gold Pickaxe",
   pickaxe_diamond:   "Diamond Pickaxe",
-  in_game_clock:     "In-Game Clock",
+  clock_block:       "Clock Block",
   seed_oak:          "Oak Seed",
   oak_wood:          "Oak Wood",
   block_oak_log:     "Oak Log",
@@ -221,7 +224,7 @@ export const ITEM_CATEGORIES: Record<string, string> = {
   // Tools
   pickaxe_stone: "tools", pickaxe_iron: "tools",
   pickaxe_gold: "tools",  pickaxe_diamond: "tools",
-  in_game_clock: "tools",
+  clock_block: "machines",
   // Lighting
   lamp_block: "lighting",
   // Locks
@@ -416,17 +419,18 @@ export const CRAFTING_RECIPES: Record<string, {
     resultQty: 2,
   },
 
-  // ── In-Game Clock — tracks the 15-minute day/night cycle ─────────────────
-  // Once crafted and held in inventory, displays the current in-game time,
-  // current phase (Night/Dawn/Day/Dusk), and countdown to the next phase change.
-  in_game_clock: {
-    displayName: "In-Game Clock",
-    description: "Craft to unlock the in-game clock HUD. Shows current time, phase (Day/Night), and countdown to next phase transition.",
+  // ── Clock Block — placeable machine block that shows in-game time when powered ─
+  // Place it in the world and connect it to a powered solar network via data cables.
+  // When powered, draws a live analog clock face with moving hands showing the
+  // current in-game time (15-minute day/night cycle mapped to a 24-hour clock).
+  clock_block: {
+    displayName: "Clock Block",
+    description: "Place in the world and connect to power via data cables. Shows a live analog clock with the in-game time and day/night phase.",
     ingredients: [
       { itemId: "raw_iron", quantity: 2 },
       { itemId: "raw_gold", quantity: 1 },
     ],
-    result: "in_game_clock",
+    result: "clock_block",
     resultQty: 1,
   },
 };

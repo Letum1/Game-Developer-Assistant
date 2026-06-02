@@ -189,8 +189,8 @@ const BLOCK_LABELS: Record<string, string> = {
   diesel_can:        "Diesel",     // equip + tap generator or battery to refuel
   thermal_paste:     "Paste",      // equip + tap machine_core to reduce temperature
   water_bucket:      "H₂O",        // equip + tap machine_core for cooling flush
-  // ── Clock item (shows clock HUD overlay when in inventory) ───────────────
-  in_game_clock:     "Clock",      // crafted tool — activates in-game clock HUD
+  // ── Clock Block (placeable machine block — shows in-game time when powered) ─
+  clock_block:       "Clock",      // analog clock face — hands move based on DAY_MS cycle
 };
 
 // ─── Block fill colors for hotbar swatches ────────────────────────────────────
@@ -218,6 +218,7 @@ const PLACEABLE = new Set([
   "lamp_block",      // powered lamp — connect to solar network for light
   "battery_block",   // stores solar energy; keeps the rig running at night
   "generator_block", // diesel generator — needs diesel_can to run
+  "clock_block",     // analog clock — place + connect to power to show in-game time
 ]);
 
 // ─── Machine block types set (for special rendering / detection) ─────────────
@@ -235,6 +236,7 @@ const MACHINE_BLOCKS = new Set([
   "lamp_block",
   "battery_block",   // energy storage — charges by day, powers rig at night
   "generator_block", // diesel generator — needs fuel to provide power
+  "clock_block",     // in-game clock — participates in BFS power routing; glows when live
 ]);
 
 // ─── Use-item set (equip from the USE section of the hotbar) ─────────────────
@@ -883,6 +885,131 @@ function drawFanBlock(
 
   // Outer border
   ctx.strokeStyle = active ? "rgba(0,180,255,0.45)" : "rgba(40,80,100,0.25)";
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
+}
+
+// ─── Clock Block renderer ─────────────────────────────────────────────────────
+// Draws a pixel-art analog clock face with moving hour + minute hands.
+// The clock maps the 15-minute DAY_MS cycle onto a 24-hour in-game day:
+//   t=0.0 = 00:00 midnight, t=0.25 = 06:00, t=0.5 = 12:00, t=0.75 = 18:00
+// When powered (connected via cable to active solar/battery/generator):
+//   • Hands spin live, face glows pale blue-white
+//   • Phase label (NIGHT/DAWN/DAY/DUSK) fades in below center
+// When unpowered:
+//   • Dark face, hands fixed at 12:00, dim gray border
+function drawClockBlock(
+  ctx: CanvasRenderingContext2D, bx: number, by: number, powered: boolean, now: number
+) {
+  const x  = bx * BS;
+  const y  = by * BS;
+  const cx = x + BS / 2;   // block center X
+  const cy = y + BS / 2;   // block center Y
+  const R  = 15;            // clock face radius (px)
+
+  // ── Case / background ────────────────────────────────────────────────────
+  ctx.fillStyle = "#13131f";
+  ctx.fillRect(x, y, BS, BS);
+
+  // Outer bezel ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, R + 3, 0, Math.PI * 2);
+  ctx.fillStyle = powered ? "#1e1e3a" : "#161618";
+  ctx.fill();
+  ctx.strokeStyle = powered ? "rgba(160,160,255,0.65)" : "rgba(80,80,100,0.35)";
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // ── Clock face (inner fill) ───────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = powered ? "#0c0c20" : "#0a0a0f";
+  ctx.fill();
+
+  // Optional soft glow when powered
+  if (powered) {
+    ctx.shadowColor = "rgba(120,120,255,0.55)";
+    ctx.shadowBlur  = 10;
+  }
+
+  // ── Hour tick marks (12 ticks around the face) ────────────────────────────
+  for (let i = 0; i < 12; i++) {
+    const angle    = (i / 12) * Math.PI * 2 - Math.PI / 2;
+    const isMain   = i % 3 === 0;   // 12, 3, 6, 9 are longer
+    const innerR   = isMain ? R - 5 : R - 3;
+    ctx.strokeStyle = powered
+      ? (isMain ? "rgba(200,200,255,0.9)" : "rgba(160,160,220,0.55)")
+      : "rgba(80,80,100,0.4)";
+    ctx.lineWidth = isMain ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * innerR, cy + Math.sin(angle) * innerR);
+    ctx.lineTo(cx + Math.cos(angle) * R,       cy + Math.sin(angle) * R);
+    ctx.stroke();
+  }
+
+  // ── Compute in-game clock hands from DAY_MS cycle ─────────────────────────
+  const t     = (now % DAY_MS) / DAY_MS; // 0.0 – 1.0 within the 15-min cycle
+  const h12   = (t * 24) % 12;           // 0–12 in-game hours (12h format)
+  const mins  = (h12 % 1) * 60;          // 0–60 minutes within that hour
+  // Angles: -π/2 offsets so 12 o'clock points up
+  const hourAngle   = (h12 / 12)  * Math.PI * 2 - Math.PI / 2;
+  const minuteAngle = (mins / 60) * Math.PI * 2 - Math.PI / 2;
+
+  ctx.lineCap = "round";
+
+  // Hour hand — short + thick
+  ctx.strokeStyle = powered ? "rgba(230,230,255,0.95)" : "rgba(60,60,80,0.4)";
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(
+    cx + Math.cos(hourAngle)   * (R - 7),
+    cy + Math.sin(hourAngle)   * (R - 7)
+  );
+  ctx.stroke();
+
+  // Minute hand — long + thin
+  ctx.strokeStyle = powered ? "rgba(180,200,255,0.85)" : "rgba(50,50,70,0.35)";
+  ctx.lineWidth   = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(
+    cx + Math.cos(minuteAngle) * (R - 3),
+    cy + Math.sin(minuteAngle) * (R - 3)
+  );
+  ctx.stroke();
+
+  ctx.lineCap = "butt";
+
+  // Center hub dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+  ctx.fillStyle = powered ? "rgba(255,255,255,0.9)" : "rgba(70,70,90,0.4)";
+  ctx.fill();
+
+  // ── Phase label below center (only when powered) ──────────────────────────
+  // Shows which phase of the day/night cycle is currently active.
+  if (powered) {
+    let label: string;
+    if      (t < 0.22) label = "NIGHT";
+    else if (t < 0.30) label = "DAWN";
+    else if (t < 0.68) label = "DAY";
+    else if (t < 0.78) label = "DUSK";
+    else               label = "NIGHT";
+
+    ctx.font         = "bold 4px monospace";
+    ctx.fillStyle    = "rgba(180,180,255,0.75)";
+    ctx.textAlign    = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, cx, cy + R - 5);
+    ctx.textAlign    = "left";
+    ctx.textBaseline = "alphabetic";
+  }
+
+  ctx.shadowBlur  = 0;
+
+  // Outer block border
+  ctx.strokeStyle = powered ? "rgba(130,130,220,0.55)" : "rgba(50,50,70,0.3)";
   ctx.lineWidth   = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, BS - 1, BS - 1);
 }
@@ -1738,6 +1865,12 @@ export default function Game({ worldName }: GameProps) {
             const fanActive = isCoreConnectedToPower(bd, gx, gy, dayFactor);
             drawFanBlock(ctx, gx, gy, fanActive, now);
 
+          } else if (blk === "clock_block") {
+            // In-Game Clock — shows a live analog clock face mapped to the DAY_MS cycle.
+            // Powered when the BFS power network reaches this block from an active source.
+            const clockPowered = isCoreConnectedToPower(bd, gx, gy, dayFactor);
+            drawClockBlock(ctx, gx, gy, clockPowered, now);
+
           } else if (blk === "block_oak_log") {
             // Oak log — dark brown trunk with vertical wood grain lines.
             // Breaks in 1 punch and drops oak_wood + 50% chance of a seed.
@@ -2584,21 +2717,6 @@ export default function Game({ worldName }: GameProps) {
   // Checked against live inventory so it updates immediately after a purchase.
   const hasDieselCan = inventory.some((i) => i.itemId === "diesel_can" && i.quantity > 0);
 
-  // ── In-Game Clock — active when the player has the craftable clock item ──
-  // When hasClock is true, a clock HUD widget is rendered below the solar badge.
-  const hasClock = inventory.some((i) => i.itemId === "in_game_clock" && i.quantity > 0);
-
-  // Clock state ticks every second (only while the clock is in inventory).
-  const [clockState, setClockState] = useState(() => getClockState(Date.now()));
-
-  // Effect: update clock every second while the player owns the clock item.
-  // Stops the interval when hasClock becomes false to save CPU.
-  useEffect(() => {
-    if (!hasClock) return;
-    const id = setInterval(() => setClockState(getClockState(Date.now())), 1000);
-    return () => clearInterval(id);
-  }, [hasClock]);
-
   // Helper: shared style for on-screen control buttons
   const ctrlBtn = "select-none touch-none transition-all active:scale-90";
 
@@ -2802,33 +2920,6 @@ export default function Game({ worldName }: GameProps) {
           }`}>
             {isDay ? "☀ SOLAR ACTIVE" : "🌙 NIGHT — no solar"}
           </div>
-
-          {/* ── In-Game Clock HUD (top-right, below solar badge) ─────────── */}
-          {/* Visible only when the player has crafted the In-Game Clock item */}
-          {/* Shows: in-game 24h time, current phase, real-time countdown to  */}
-          {/* the next phase transition (Night→Dawn→Day→Dusk→Night…).         */}
-          {hasClock && (
-            <div className={`absolute top-10 right-2 z-10 px-2 py-1.5 rounded border font-mono bg-black/80 flex flex-col items-end gap-0.5 ${
-              clockState.phase === "DAY"   ? "border-yellow-500/60 text-yellow-200" :
-              clockState.phase === "DAWN"  ? "border-orange-400/60 text-orange-200" :
-              clockState.phase === "DUSK"  ? "border-orange-500/60 text-orange-300" :
-                                             "border-blue-500/40   text-blue-200"
-            }`}>
-              {/* Row 1: emoji + in-game time */}
-              <div className="flex items-center gap-1 text-[11px] font-bold leading-none">
-                <span>{clockState.phaseEmoji}</span>
-                <span>{clockState.timeStr}</span>
-              </div>
-              {/* Row 2: current phase label */}
-              <div className="text-[8px] tracking-widest opacity-80 leading-none">
-                {clockState.phase}
-              </div>
-              {/* Row 3: countdown to next phase */}
-              <div className="text-[8px] opacity-60 leading-none">
-                {clockState.countdown} left
-              </div>
-            </div>
-          )}
 
           {/* ── MINIMAP OVERLAY — bottom-right corner ────────────────────── */}
           {/* The internal canvas is 1px per block; CSS scales it up to      */}

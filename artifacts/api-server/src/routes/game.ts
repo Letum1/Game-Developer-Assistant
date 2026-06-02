@@ -35,6 +35,7 @@ const SELF_DROP_BLOCKS = new Set([
   "battery_block",   // returns itself so players can rearrange energy storage
   "generator_block", // returns itself so players can rearrange generators
   "platform_block",  // one-way platform — returns itself so bases are rearrangeable
+  "clock_block",     // clock block — returns itself so players can reposition it
 ]);
 
 // ─── Oak tree blocks: breaking gives oak_wood (not the block itself) ─────────
@@ -256,6 +257,14 @@ router.post("/game/action", async (req, res) => {
         );
       }
 
+      // One-machine-core-per-player: clear the flag when any machine_core is broken.
+      // This frees the player's slot so they can place a new core elsewhere.
+      if (block === "machine_core") {
+        await client.query(
+          "UPDATE miners SET has_machine_core=false WHERE user_id=$1", [userId]
+        );
+      }
+
       // updateMinerFromWorld is best-effort — any error here must NOT roll back
       // the block break. The block is already removed from the world; silently
       // log the failure and let the transaction commit regardless.
@@ -290,11 +299,33 @@ router.post("/game/action", async (req, res) => {
       const grid: string[][] = worldRes.rows[0].block_data;
       if (grid[y]?.[x] !== "air") { await client.query("ROLLBACK"); res.status(400).json({ error:"Space occupied" }); return; }
 
+      // ── One-machine-core-per-player enforcement ──────────────────────────
+      // Each player is allowed exactly one machine_core placed in any world.
+      // Check the has_machine_core flag in the miners table; reject if already set.
+      if (placeBlock === "machine_core") {
+        const coreRes = await client.query(
+          "SELECT has_machine_core FROM miners WHERE user_id=$1", [userId]
+        );
+        if (coreRes.rows[0]?.has_machine_core === true) {
+          await client.query("ROLLBACK");
+          res.status(400).json({ error: "You already have a Machine Core placed. Break your existing core first to place a new one." });
+          return;
+        }
+        // Reserve the slot — updated to true after writing to world below
+      }
+
       grid[y][x] = placeBlock;
       await client.query("UPDATE worlds SET block_data=$1 WHERE name=$2", [JSON.stringify(grid), worldName]);
       await client.query(
         "UPDATE inventories SET quantity=quantity-1 WHERE user_id=$1 AND item_id=$2", [userId, placeBlock]
       );
+
+      // Set the one-per-player flag now that the core is written to the world.
+      if (placeBlock === "machine_core") {
+        await client.query(
+          "UPDATE miners SET has_machine_core=true WHERE user_id=$1", [userId]
+        );
+      }
 
       // updateMinerFromWorld is best-effort — any SQL error here must NOT roll
       // back the block placement. The block is already written to the world;
