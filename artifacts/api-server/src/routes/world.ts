@@ -183,6 +183,27 @@ router.get("/world/:name", async (req, res) => {
           [userId]
         );
       }
+
+      // Give 1 machine_core if the player doesn't already have one anywhere.
+      // Machine Core is account-tied (not craftable) — every player gets exactly one.
+      // This back-fills the item for players who registered before this system existed.
+      const coreCheck = await pool.query(
+        `SELECT 1 FROM inventories WHERE user_id = $1 AND item_id = 'machine_core' AND quantity > 0 LIMIT 1`,
+        [userId]
+      );
+      const hasCorePlaced = await pool.query(
+        `SELECT has_machine_core FROM miners WHERE user_id = $1`,
+        [userId]
+      );
+      // Only give the item if they don't already have one AND haven't already placed one
+      if (coreCheck.rows.length === 0 && !hasCorePlaced.rows[0]?.has_machine_core) {
+        await pool.query(
+          `INSERT INTO inventories (user_id, item_id, quantity) VALUES ($1, 'machine_core', 1)
+           ON CONFLICT (user_id, item_id)
+           DO UPDATE SET quantity = GREATEST(inventories.quantity, 1)`,
+          [userId]
+        );
+      }
     } else {
       // ── Brand new world — generate terrain from world name seed ─────────────
       const grid = generateSeededGrid(name);
@@ -269,11 +290,11 @@ router.post("/world/:name/lock", async (req, res) => {
       return;
     }
 
-    // Consume one World Lock or Diamond Lock from inventory
+    // Consume one World Lock from inventory (Diamond Lock has been removed)
     const lockItem = await client.query(
       `SELECT item_id, quantity FROM inventories
-       WHERE user_id = $1 AND item_id IN ('world_lock','diamond_lock') AND quantity > 0
-       ORDER BY item_id ASC LIMIT 1`,
+       WHERE user_id = $1 AND item_id = 'world_lock' AND quantity > 0
+       LIMIT 1`,
       [userId]
     );
     if (lockItem.rows.length === 0) {

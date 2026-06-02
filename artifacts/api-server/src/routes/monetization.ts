@@ -29,7 +29,7 @@ import {
   VerifyMonetizationTaskBody,
 } from "@workspace/api-zod";
 import {
-  DRILL_BOOST_MULTIPLIER,
+  DRILL_BOOST_TH_BONUS,
   DRILL_BOOST_DURATION_MS,
   DRILL_BOOST_MAX_PER_DAY,
 } from "../lib/game-constants";
@@ -204,8 +204,7 @@ router.post("/monetization/verify-task", async (req, res) => {
         [userId]
       );
       reward  = "drill_boost";
-      message = `Drill overcharged! +0.50 TH boost for 30 min. +100 💎 (${boostToday + 1}/${DRILL_BOOST_MAX_PER_DAY} today)`;
-      void DRILL_BOOST_MULTIPLIER; // used via import, silences linter
+      message = `Drill overcharged! +${DRILL_BOOST_TH_BONUS} TH bonus for 30 min. +100 💎 (${boostToday + 1}/${DRILL_BOOST_MAX_PER_DAY} today)`;
 
     } else if (taskType === "cool_down") {
       // Emergency cooling: reset miner temperature + reward 100 gems for visiting the ad

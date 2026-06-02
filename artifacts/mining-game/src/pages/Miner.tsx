@@ -838,6 +838,67 @@ export default function Miner() {
                   {fanCount} {fanCount >= 4 ? "✓ optimal" : fanCount > 0 ? `(${4 - fanCount} more to zero out heat)` : "(add fans to reduce overheat)"}
                 </span>
               </div>
+
+              {/* ── Thermal / Power stats ─────────────────────────────────────
+                  Shows how much heat the rig produces, how much fans remove,
+                  and the net temperature change per hour while running.       */}
+              {(() => {
+                const am            = miner as any;
+                const heatRise      = am.heatRisePerHour  ?? 100;               // base 100°C/hr
+                const cooling       = am.coolingPerHour   ?? 0;                  // 25°C/hr per fan
+                const netHeat       = am.netHeatPerHour   ?? Math.max(0, heatRise - cooling);
+                const isStable      = netHeat === 0;
+                const powerConsumed = (miner as any).activeRigs ?? 0;            // 1 unit per active rig
+                const totalTH       = (miner as any).rigCount   ?? 0;            // total TH (rig blocks)
+                const boostedTH     = (miner as any).isDrillBoosted ? totalTH + 0.5 : totalTH;
+                return (
+                  <>
+                    {/* Heat produced */}
+                    <div className="flex justify-between items-center pb-2 border-b border-border">
+                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                        <Thermometer className="w-3 h-3 text-red-400" /> Heat Produced
+                      </span>
+                      <span className="text-red-400 font-bold">{heatRise} °C/hr</span>
+                    </div>
+                    {/* Cooling capacity */}
+                    <div className="flex justify-between items-center pb-2 border-b border-border">
+                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                        <Snowflake className="w-3 h-3 text-blue-400" /> Heat Removed
+                      </span>
+                      <span className="text-blue-400 font-bold">{cooling} °C/hr</span>
+                    </div>
+                    {/* Net heat — 0 means rig stays cool indefinitely */}
+                    <div className="flex justify-between items-center pb-2 border-b border-border">
+                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                        <Activity className="w-3 h-3 text-orange-400" /> Net Heat
+                      </span>
+                      <span className={isStable ? "text-primary font-bold" : "text-orange-400 font-bold"}>
+                        {isStable ? "0 °C/hr ✓ stable" : `+${netHeat} °C/hr`}
+                      </span>
+                    </div>
+                    {/* Power consumed */}
+                    <div className="flex justify-between items-center pb-2 border-b border-border">
+                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                        <Zap className="w-3 h-3 text-yellow-400" /> Power Used
+                      </span>
+                      <span className="text-yellow-400 font-bold">{powerConsumed} / {powerSupply} units</span>
+                    </div>
+                    {/* Effective TH including any drill boost */}
+                    <div className="flex justify-between items-center pb-2 border-b border-border">
+                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
+                        <Cpu className="w-3 h-3 text-cyan-400" /> Effective TH
+                      </span>
+                      <span className="text-cyan-400 font-bold">
+                        {boostedTH.toFixed(boostedTH % 1 === 0 ? 0 : 2)} TH
+                        {(miner as any).isDrillBoosted && (
+                          <span className="text-cyan-300 text-[10px] ml-1">(+0.50 boost)</span>
+                        )}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
+
               {/* Progress bar toward speed ceiling */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-[10px] text-muted-foreground uppercase tracking-widest">
@@ -902,7 +963,7 @@ export default function Miner() {
                         <Zap className="w-4 h-4 text-cyan-400 shrink-0 animate-pulse" />
                         <div className="text-xs font-mono">
                           <p className="text-cyan-400 font-bold uppercase tracking-widest text-[10px]">
-                            ⚡ Drill Overcharged — +50% Rate Active
+                            ⚡ Drill Overcharged — +0.50 TH Bonus Active
                           </p>
                           <p className="text-muted-foreground text-[10px]">
                             Expires {drillBoostUntil.toLocaleTimeString()}

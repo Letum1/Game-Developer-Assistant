@@ -19,7 +19,7 @@ import {
   FUEL_DRAIN_RATE,
   BATTERY_CHARGE_RATE,
   BATTERY_DRAIN_RATE,
-  DRILL_BOOST_MULTIPLIER,
+  DRILL_BOOST_RATE_BONUS,
   DRILL_BOOST_MAX_PER_DAY,
   getDayFactor,
 } from "../lib/game-constants";
@@ -55,10 +55,19 @@ function formatMiner(m: Record<string, unknown>) {
   const drillBoostUntil = m.drill_boost_until
     ? new Date(m.drill_boost_until as string)
     : null;
-  const now           = new Date();
-  const isDrillBoosted = drillBoostUntil !== null && drillBoostUntil > now;
-  const boostMult     = isDrillBoosted ? DRILL_BOOST_MULTIPLIER : 1.0;
-  const drillBoostToday = parseInt(m.drill_boost_today as string) || 0;
+  const now              = new Date();
+  const isDrillBoosted   = drillBoostUntil !== null && drillBoostUntil > now;
+  // Additive bonus: +0.50 TH worth of rate (not a percentage multiplier)
+  const boostRateBonus   = isDrillBoosted ? DRILL_BOOST_RATE_BONUS : 0;
+  const drillBoostToday  = parseInt(m.drill_boost_today as string) || 0;
+
+  // ── Heat production stats ──────────────────────────────────────────────────
+  // heatRisePerHour: base heat produced per hour while running (always 100°C/hr)
+  // coolingPerHour:  total cooling provided by fan blocks (25°C/hr each)
+  // netHeatPerHour:  net temperature change per hour — 0 means stable temperature
+  const heatRisePerHour  = TEMP_RISE_PER_HOUR;                                  // 100 °C/hr base
+  const coolingPerHour   = fanCount * FAN_COOLING_PER_HOUR;                     // 25 °C/hr per fan
+  const netHeatPerHour   = Math.max(0, heatRisePerHour - coolingPerHour);       // 0 = stable
 
   return {
     userId: m.user_id,
@@ -79,8 +88,8 @@ function formatMiner(m: Record<string, unknown>) {
     isRunning: m.is_running,
     lastMaintenanceAt: (m.last_maintenance_at as Date).toISOString(),
     lastTickAt: (m.last_tick_at as Date).toISOString(),
-    // Apply boost multiplier so front-end sees the boosted rate
-    ratePerSecond: minerRate(activeRigs) * boostMult,
+    // Additive boost: +0.50 TH rate bonus (not a ×1.5 multiplier)
+    ratePerSecond: minerRate(activeRigs) + boostRateBonus,
     nextUpgradeCost,
     nextUpgradePoints,
     // Drill boost metadata for the dashboard
@@ -88,6 +97,10 @@ function formatMiner(m: Record<string, unknown>) {
     drillBoostUntil: drillBoostUntil?.toISOString() ?? null,
     drillBoostToday,
     drillBoostMaxPerDay: DRILL_BOOST_MAX_PER_DAY,
+    // Heat production stats for the dashboard thermal panel
+    heatRisePerHour,
+    coolingPerHour,
+    netHeatPerHour,
   };
 }
 
@@ -175,18 +188,18 @@ router.post("/miner/tick", async (req, res) => {
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
 
-    // ── Drill boost multiplier ───────────────────────────────────────────────
-    // If drill_boost_until is in the future, apply the 1.5× rate multiplier.
-    // The boost is transient: when it expires mid-tick, the multiplier still
-    // applies for the full tick (close enough for the ~30s tick interval).
+    // ── Drill boost — additive +0.50 TH rate bonus ──────────────────────────
+    // If drill_boost_until is in the future, add DRILL_BOOST_RATE_BONUS to the
+    // per-second rate (additive, NOT a percentage multiplier).
+    // When the boost expires mid-tick the full bonus still applies for that tick.
     const drillBoostUntilTick = m.drill_boost_until
       ? new Date(m.drill_boost_until as string)
       : null;
-    const isDrillBoosted = drillBoostUntilTick !== null && drillBoostUntilTick > now;
-    const boostMult = isDrillBoosted ? DRILL_BOOST_MULTIPLIER : 1.0;
+    const isDrillBoosted  = drillBoostUntilTick !== null && drillBoostUntilTick > now;
+    const boostRateBonus  = isDrillBoosted ? DRILL_BOOST_RATE_BONUS : 0;
 
     if (isRunning && elapsedSeconds > 0) {
-      newBalance += minerRate(activeRigs) * boostMult * elapsedSeconds;
+      newBalance += (minerRate(activeRigs) + boostRateBonus) * elapsedSeconds;
       const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
       newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }

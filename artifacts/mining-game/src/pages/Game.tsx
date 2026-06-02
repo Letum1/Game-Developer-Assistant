@@ -139,6 +139,9 @@ const BLOCK_COLORS: Record<string, string> = {
   lamp_block:        "#1c1608",   // very dark brown — metal lantern casing
   battery_block:     "#0f1a10",   // very dark green — energy cell housing
   generator_block:   "#1a1210",   // very dark brown/gray — diesel engine casing
+  // Clock block was missing from this map — that's why it rendered as invisible.
+  // A dark charcoal colour is used so the pixel-art clock face (drawn on top) pops.
+  clock_block:       "#1a1520",   // dark charcoal with slight purple tint — timepiece housing
 };
 
 // ─── Top-edge highlight tints (makes blocks look 3D) ────────────────────────
@@ -164,6 +167,7 @@ const BLOCK_TINTS: Record<string, string> = {
   lamp_block:        "rgba(255,220,80,0.60)",  // warm amber — illuminated glass
   battery_block:     "rgba(34,220,120,0.25)",  // bright green — energy glow
   generator_block:   "rgba(255,100,30,0.20)",  // warm orange — exhaust heat
+  clock_block:       "rgba(180,180,220,0.20)", // silvery-blue — clock glass face
 };
 
 // ─── Hotbar label names ───────────────────────────────────────────────────────
@@ -2824,6 +2828,47 @@ export default function Game({ worldName }: GameProps) {
           >
             {worldLocked ? "🔒" : "🌍"} {worldName}
           </button>
+
+          {/* ── World Lock / Unlock button ────────────────────────────────────
+               Visible only to the world owner (or to anyone if world is unlocked
+               and they have a World Lock item in their inventory).
+               Calls POST /api/world/:name/lock or /unlock and updates local state. */}
+          {(() => {
+            const currentNumId = parseInt(userId ?? "0") || 0;
+            const isOwner      = worldOwnerId === currentNumId || worldOwnerId === null;
+            if (!isOwner && !worldLocked) return null; // non-owner, unlocked = nothing to show
+            if (!isOwner && worldLocked)  return null; // non-owner can't unlock
+            return (
+              <button
+                className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded border font-mono text-[10px] font-bold uppercase transition-colors ${
+                  worldLocked
+                    ? "border-yellow-500/60 text-yellow-400 hover:bg-yellow-500/10"
+                    : "border-border text-muted-foreground hover:border-yellow-500/60 hover:text-yellow-400"
+                }`}
+                title={worldLocked ? "Click to unlock world (owner only)" : "Click to lock world (costs 1 World Lock from inventory)"}
+                onClick={async () => {
+                  const action = worldLocked ? "unlock" : "lock";
+                  try {
+                    const resp = await fetch(`/api/world/${encodeURIComponent(worldName)}/${action}`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", "x-user-id": userId ?? "" },
+                    });
+                    const json = await resp.json();
+                    if (json.success) {
+                      setWorldLocked(json.locked);
+                      toast({ title: json.locked ? "🔒 WORLD LOCKED" : "🔓 WORLD UNLOCKED", description: json.message, className: "bg-black border-yellow-500 text-yellow-300 font-mono text-xs" });
+                    } else {
+                      toast({ title: "FAILED", description: json.error ?? "Could not change lock.", variant: "destructive" });
+                    }
+                  } catch {
+                    toast({ title: "NETWORK ERROR", description: "Could not reach server.", variant: "destructive" });
+                  }
+                }}
+              >
+                {worldLocked ? "🔓 Unlock" : "🔒 Lock"}
+              </button>
+            );
+          })()}
 
           {/* ── Floating window toggles (Miner / Inventory / Store / Leaderboard) ──
                Hidden on mobile — those pages are reachable via the bottom nav tab bar.

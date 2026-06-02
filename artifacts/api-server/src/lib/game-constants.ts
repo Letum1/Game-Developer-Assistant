@@ -169,11 +169,15 @@ export const BATTERY_DRAIN_RATE    = 0.5;
 export const FUEL_DRAIN_RATE       = 0.1;
 
 // ─── Overcharge Drill boost constants ─────────────────────────────────────────
-// Watching an ad overcharges the drill, giving +50% mining income for 30 minutes.
+// Watching an ad overcharges the drill, adding +0.50 TH to the player's effective
+// mining rate for 30 minutes (additive bonus, NOT a percentage multiplier).
+// This equals the rate of half a mining rig running continuously.
 // Players are limited to DRILL_BOOST_MAX_PER_DAY uses per calendar day to prevent abuse.
-export const DRILL_BOOST_MULTIPLIER  = 1.5;   // 1.5× rate while boosted (0.5 TH extra)
-export const DRILL_BOOST_DURATION_MS = 30 * 60 * 1000;  // 30 minutes in ms
-export const DRILL_BOOST_MAX_PER_DAY = 3;     // max overcharges allowed per calendar day
+export const DRILL_BOOST_TH_BONUS    = 0.5;               // +0.50 TH additive bonus
+// sats/second equivalent of 0.5 extra TH — same as 0.5 * MINER_RATES[1]
+export const DRILL_BOOST_RATE_BONUS  = 0.5 / 86400;       // ≈ 0.00000578 sats/sec
+export const DRILL_BOOST_DURATION_MS = 30 * 60 * 1000;    // 30 minutes in ms
+export const DRILL_BOOST_MAX_PER_DAY = 3;                  // max overcharges per calendar day
 
 // ─── Store items ──────────────────────────────────────────────────────────────
 // Only real, directly usable items are sold here.
@@ -184,6 +188,9 @@ export const DRILL_BOOST_MAX_PER_DAY = 3;     // max overcharges allowed per cal
 // rewarded ad instead of spending gems on cooling items.
 export const STORE_ITEMS = [
   // ── Cooling / maintenance items ───────────────────────────────────────────────
+  // Intentionally priced at 1000 gems — high enough that players are motivated to
+  // watch the "Flush Cooldown" rewarded ad (free) rather than spending gems.
+  // Players who mine hard and save up can still buy them outright.
   { itemId: "thermal_paste",     displayName: "Thermal Paste",     gemCost: 1000, realCost: null, category: "cooling",    description: "Equip from hotbar, then tap Machine Core to reduce temperature. Or watch the Flush Cooldown ad for free!" },
   { itemId: "water_bucket",      displayName: "Water Bucket",      gemCost: 1000, realCost: null, category: "cooling",    description: "Equip from hotbar, then tap Machine Core to flush cooling. Or watch the Flush Cooldown ad for free!" },
   // ── Fuel ─────────────────────────────────────────────────────────────────────
@@ -197,7 +204,6 @@ export const STORE_ITEMS = [
   { itemId: "lamp_block",        displayName: "Lamp Block",        gemCost: 15,   realCost: null, category: "lighting",   description: "Place underground and wire to your solar rig to illuminate caverns." },
   // ── Locks — buy to lock your world ───────────────────────────────────────────
   { itemId: "world_lock",        displayName: "World Lock",        gemCost: 500,  realCost: null, category: "locks",      description: "Lock a world so only you can build and mine in it." },
-  { itemId: "diamond_lock",      displayName: "Diamond Lock",      gemCost: 2500, realCost: null, category: "locks",      description: "Premium world lock with extra security." },
 ];
 
 // ─── Human-readable item names ────────────────────────────────────────────────
@@ -286,17 +292,9 @@ export const CRAFTING_RECIPES: Record<string, {
     unlocksMiner: true,
   },
 
-  machine_core: {
-    displayName: "Machine Core",
-    description: "The CPU block of your Data Rig. Place it in the world, then connect Solar Panels via Data Cables.",
-    ingredients: [
-      { itemId: "raw_iron",    quantity: 5 },
-      { itemId: "raw_gold",    quantity: 2 },
-      { itemId: "raw_diamond", quantity: 1 },
-    ],
-    result: "machine_core",
-    resultQty: 1,
-  },
+  // machine_core is intentionally NOT craftable — every player receives exactly
+  // one Machine Core tied to their account when they first join any world.
+  // This ensures fair one-per-player enforcement without requiring crafting.
 
   solar_panel_block: {
     displayName: "Solar Panel Block",
