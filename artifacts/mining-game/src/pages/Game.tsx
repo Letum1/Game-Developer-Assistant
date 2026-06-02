@@ -12,6 +12,7 @@
 // ============================================================
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetWorld, useGameAction, useGetWallet, useGetInventory, useGetMiner,
   useMaintainMiner,
@@ -1259,6 +1260,9 @@ export default function Game({ worldName }: GameProps) {
   // Consumes 1 item from inventory and resets (or flushes) the miner temperature.
   const maintainMiner = useMaintainMiner();
   const { toast } = useToast();
+  // queryClient: used for optimistic gem counter updates on block break so the
+  // HUD reflects the new gem balance instantly without waiting for a server refetch.
+  const queryClient = useQueryClient();
 
   // ── Miner data — used for overheat detection in the world renderer ────────
   const { data: minerData } = useGetMiner({ query: { enabled: !!userId, refetchInterval: 8000 } });
@@ -2606,12 +2610,39 @@ export default function Game({ worldName }: GameProps) {
             pendingBreakRef.current = false;
             if (data.wizardChallenge) { setWizard(true); return; }
             if (data.success) {
-              if (data.dropItem) {
+              const resp = data as typeof data & { gemsGained?: number; dropQty?: number; selfQty?: number };
+
+              // ── Optimistic gem counter update ──────────────────────────────
+              // Update the wallet cache immediately so the HUD gem count ticks
+              // up the moment the server confirms the break — no refetch needed.
+              const gained = resp.gemsGained ?? 0;
+              if (gained > 0) {
+                queryClient.setQueryData(
+                  getGetWalletQueryKey(),
+                  (old: { gems?: number; actionCount?: number } | undefined) =>
+                    old ? { ...old, gems: (old.gems ?? 0) + gained } : old
+                );
+              }
+
+              // ── Drop toast — show quantity when > 1 ───────────────────────
+              // selfQty: how many of the block itself came back (e.g. 3 dirt)
+              // dropQty: how many of the secondary item dropped (usually 1 ore)
+              const selfQty = resp.selfQty ?? 0;
+              const dropQty = resp.dropQty ?? 1;
+              if (selfQty > 1) {
+                // e.g. "+3 DIRT" when dirt rolls 3 on the 1–5 range
                 toast({
-                  title: `+1 ${data.dropItem.toUpperCase().replace(/_/g, " ")}`,
+                  title: `+${selfQty} ${blkType.replace("block_", "").toUpperCase().replace(/_/g, " ")}`,
+                  className: "border-yellow-500 bg-black text-yellow-300 font-mono uppercase text-xs",
+                });
+              } else if (data.dropItem) {
+                const label = data.dropItem.toUpperCase().replace(/_/g, " ");
+                toast({
+                  title: dropQty > 1 ? `+${dropQty} ${label}` : `+1 ${label}`,
                   className: "border-primary bg-black text-primary font-mono uppercase text-xs",
                 });
               }
+
               refetchWorld();
               refetchInventory();
             }

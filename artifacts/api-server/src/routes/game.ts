@@ -23,20 +23,21 @@ const router: IRouter = Router();
 // ─── Anti-cheat: rolling window of action timestamps per user (in-memory) ────
 const actionTimestamps: Map<number, number[]> = new Map();
 
-// ─── Self-drop blocks: breaking returns the same block to inventory ───────────
-// Machine blocks all return themselves so players can rearrange rigs freely.
-// Platform block also returns itself so players can rearrange their structures.
-const SELF_DROP_BLOCKS = new Set([
-  "block_grass", "block_dirt", "block_rock",
-  "machine_core", "solar_panel_block", "data_cable",
-  "lamp_block",
-  "mining_rig",      // ASIC rig hardware — returns itself so rigs are rearrangeable
-  "fan_block",       // cooling fan — returns itself so fans are rearrangeable
-  "battery_block",   // returns itself so players can rearrange energy storage
-  "generator_block", // returns itself so players can rearrange generators
-  "platform_block",  // one-way platform — returns itself so bases are rearrangeable
-  "clock_block",     // clock block — returns itself so players can reposition it
-]);
+// ─── Self-drop resolution helper ─────────────────────────────────────────────
+// Returns the number of the block itself to drop back into inventory, or 0 if
+// the block does not self-drop.
+// selfDropQty in BLOCK_REWARDS can be:
+//   number       → fixed quantity
+//   [min, max]   → random integer in the inclusive range
+//   undefined    → block does not self-drop (returns 0)
+function resolveSelfDropQty(block: string): number {
+  const qty = BLOCK_REWARDS[block]?.selfDropQty;
+  if (qty === undefined) return 0;
+  if (typeof qty === "number") return qty;
+  // [min, max] tuple
+  const [min, max] = qty;
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
 
 // ─── Oak tree blocks: breaking gives oak_wood (not the block itself) ─────────
 const OAK_BLOCKS = new Set(["block_oak_log", "block_oak_sapling"]);
@@ -211,12 +212,26 @@ router.post("/game/action", async (req, res) => {
       const gemsGained = Math.ceil(rewards.gems);
       const pointsGained = Math.round(rewards.points * multiplier);
 
-      // Oak blocks always drop oak_wood (never themselves)
+      // ── Resolve what to drop ─────────────────────────────────────────────
+      // Oak blocks (log + sapling) always drop 1 oak_wood (never themselves).
+      // Other blocks may self-drop a variable quantity (e.g. dirt = 1–5),
+      // and may also have a secondary item drop (ores, obsidian, etc.).
       let dropItem: string | null = null;
+      let dropQty  = 1; // quantity of dropItem
+      let selfQty  = 0; // how many of the block itself to return
+
       if (OAK_BLOCKS.has(block)) {
+        // Oak log / sapling → always give 1 oak_wood
         dropItem = "oak_wood";
-      } else if (rewards.drop && rewards.dropChance && Math.random() < rewards.dropChance) {
-        dropItem = rewards.drop;
+        dropQty  = 1;
+      } else {
+        // Self-drop (dirt 1–5, grass/rock/machines = 1, others = 0)
+        selfQty = resolveSelfDropQty(block);
+        // Secondary item drop (ores, obsidian, seeds, etc.)
+        if (rewards.drop && rewards.dropChance && Math.random() < rewards.dropChance) {
+          dropItem = rewards.drop;
+          dropQty  = 1;
+        }
       }
 
       grid[y][x] = "air";
@@ -231,25 +246,25 @@ router.post("/game/action", async (req, res) => {
         await client.query("UPDATE wallets SET action_count=action_count+1 WHERE user_id=$1", [userId]);
       }
 
-      // Self-drop blocks return to inventory
-      if (SELF_DROP_BLOCKS.has(block)) {
+      // Self-drop: put the block itself back into inventory (supports qty > 1)
+      if (selfQty > 0) {
         await client.query(
-          `INSERT INTO inventories (user_id,item_id,quantity) VALUES($1,$2,1)
-           ON CONFLICT(user_id,item_id) DO UPDATE SET quantity=inventories.quantity+1`,
-          [userId, block]
+          `INSERT INTO inventories (user_id,item_id,quantity) VALUES($1,$2,$3)
+           ON CONFLICT(user_id,item_id) DO UPDATE SET quantity=inventories.quantity+$3`,
+          [userId, block, selfQty]
         );
       }
 
-      // Oak wood drop
+      // Primary / secondary drop item (oak_wood, raw_iron, obsidian, etc.)
       if (dropItem) {
         await client.query(
-          `INSERT INTO inventories (user_id,item_id,quantity) VALUES($1,$2,1)
-           ON CONFLICT(user_id,item_id) DO UPDATE SET quantity=inventories.quantity+1`,
-          [userId, dropItem]
+          `INSERT INTO inventories (user_id,item_id,quantity) VALUES($1,$2,$3)
+           ON CONFLICT(user_id,item_id) DO UPDATE SET quantity=inventories.quantity+$3`,
+          [userId, dropItem, dropQty]
         );
       }
-      // Oak log also has 50% seed bonus
-      if (block === "block_oak_log" && Math.random() < 0.5) {
+      // Oak log has a 25% seed bonus (encourages replanting)
+      if (block === "block_oak_log" && Math.random() < 0.25) {
         await client.query(
           `INSERT INTO inventories (user_id,item_id,quantity) VALUES($1,'seed_oak',1)
            ON CONFLICT(user_id,item_id) DO UPDATE SET quantity=inventories.quantity+1`,
@@ -277,7 +292,9 @@ router.post("/game/action", async (req, res) => {
       }
 
       await client.query("COMMIT");
-      res.json({ success:true, gemsGained, pointsAwarded:pointsGained, dropItem, currentActions, wizardChallenge });
+      // dropQty: how many of dropItem the player received (for toast display)
+      // selfQty: how many of the block itself was returned to inventory
+      res.json({ success:true, gemsGained, pointsAwarded:pointsGained, dropItem, dropQty, selfQty, currentActions, wizardChallenge });
 
     // ══════════════════════════════════════════════════════════════════════
     // PLACE — place block from inventory into world

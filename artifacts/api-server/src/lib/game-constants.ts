@@ -42,33 +42,63 @@ export function getDayFactor(nowMs: number): number {
 
 // ─── Block break rewards ─────────────────────────────────────────────────────
 // When a player breaks a block, they earn `gems` currency and `points` (for
-// the 3-hour leaderboard revenue pool). `drop` + `dropChance` control resource drops.
-export const BLOCK_REWARDS: Record<string, { gems: number; points: number; drop?: string; dropChance?: number; selfDrop?: boolean }> = {
-  block_dirt:          { gems: 1,  points: 10,  drop: "seed_oak",    dropChance: 0.15 },
-  block_grass:         { gems: 1,  points: 8,   drop: "seed_oak",    dropChance: 0.30 },
-  block_iron:          { gems: 3,  points: 20,  drop: "raw_iron",    dropChance: 1.0  },
-  block_rock:          { gems: 2,  points: 12                                         },
-  block_gold:          { gems: 10, points: 50,  drop: "raw_gold",    dropChance: 1.0  },
-  block_diamond:       { gems: 25, points: 100, drop: "raw_diamond", dropChance: 1.0  },
-  block_lava:          { gems: 5,  points: 30,  drop: "obsidian",    dropChance: 0.5  },
-  // Oak tree — breaks in one punch, drops wood + sometimes a seed
-  block_oak_sapling:   { gems: 0,  points: 0,   drop: "seed_oak",    dropChance: 1.0  },
-  block_oak_log:       { gems: 2,  points: 5,   drop: "seed_oak",    dropChance: 0.5  },
-  // Oak leaf clusters — light and airy, no drops
-  block_oak_leaf:      { gems: 0,  points: 0                                          },
-  // Platform block — crafted from wood, one-way collision (solid from above)
-  platform_block:      { gems: 0,  points: 0                                          },
-  // Machine blocks return themselves (like grass/dirt) so players can re-arrange rigs
-  machine_core:        { gems: 0,  points: 0                                          },
-  mining_rig:          { gems: 0,  points: 0                                          },
-  fan_block:           { gems: 0,  points: 0                                          },
-  solar_panel_block:   { gems: 0,  points: 0                                          },
-  data_cable:          { gems: 0,  points: 0                                          },
-  lamp_block:          { gems: 0,  points: 0                                          },
-  battery_block:       { gems: 0,  points: 0                                          },
-  generator_block:     { gems: 0,  points: 0                                          },
-  // Clock block returns itself so players can rearrange/recover it
-  clock_block:         { gems: 0,  points: 0                                          },
+// the 3-hour leaderboard revenue pool).
+//
+// selfDropQty: how many of the block itself to return to inventory.
+//   - number       → fixed quantity (e.g. 1)
+//   - [min, max]   → random integer in range (inclusive), e.g. [1, 5]
+//   - undefined    → block does NOT self-drop (checked against SELF_DROP_BLOCKS in game.ts)
+//
+// drop + dropChance: secondary item drop, separate from the self-drop.
+//   e.g. breaking an oak log always gives oak_wood (via OAK_BLOCKS) + 25% seed bonus.
+export const BLOCK_REWARDS: Record<string, {
+  gems: number;
+  points: number;
+  drop?: string;
+  dropChance?: number;
+  selfDrop?: boolean;
+  selfDropQty?: number | [number, number]; // fixed qty or [min, max] random range
+}> = {
+  // ── Common surface blocks ────────────────────────────────────────────────────
+  // Dirt: returns 1–5 dirt blocks (light farming material, very common).
+  block_dirt:          { gems: 1,  points: 8,   selfDropQty: [1, 5] },
+  // Grass: returns exactly 1 grass block.
+  block_grass:         { gems: 1,  points: 8,   selfDropQty: 1 },
+  // Rock/stone: returns exactly 1 rock block, 2 gems (mid-tier filler).
+  block_rock:          { gems: 2,  points: 12,  selfDropQty: 1 },
+
+  // ── Ores ──────────────────────────────────────────────────────────────────────
+  // Iron: reliable income starter — always drops 1 raw_iron, earns 5 gems.
+  block_iron:          { gems: 5,  points: 20,  drop: "raw_iron",    dropChance: 1.0  },
+  // Gold: mid-game ore — always drops 1 raw_gold, earns 15 gems.
+  block_gold:          { gems: 15, points: 50,  drop: "raw_gold",    dropChance: 1.0  },
+  // Diamond: rare deep-layer ore — always drops 1 raw_diamond, earns 35 gems.
+  block_diamond:       { gems: 35, points: 100, drop: "raw_diamond", dropChance: 1.0  },
+  // Lava: hazardous block — 40% chance to drop 1 obsidian, earns 8 gems.
+  block_lava:          { gems: 8,  points: 30,  drop: "obsidian",    dropChance: 0.40 },
+
+  // ── Oak tree blocks ──────────────────────────────────────────────────────────
+  // Oak sapling: breaks instantly, drops 1 oak_wood (via OAK_BLOCKS in game.ts).
+  block_oak_sapling:   { gems: 0,  points: 0 },
+  // Oak log: drops 1 oak_wood (via OAK_BLOCKS) + 25% seed bonus, earns 3 gems.
+  block_oak_log:       { gems: 3,  points: 8 },
+  // Oak leaf: purely decorative — no drops, no gems.
+  block_oak_leaf:      { gems: 0,  points: 0 },
+
+  // ── Crafted structural blocks ─────────────────────────────────────────────────
+  // Platform block: returns itself so players can rearrange their bases.
+  platform_block:      { gems: 0,  points: 0,   selfDropQty: 1 },
+
+  // ── Machine blocks (all return themselves so rigs are rearrangeable) ──────────
+  machine_core:        { gems: 0,  points: 0,   selfDropQty: 1 },
+  mining_rig:          { gems: 0,  points: 0,   selfDropQty: 1 },
+  fan_block:           { gems: 0,  points: 0,   selfDropQty: 1 },
+  solar_panel_block:   { gems: 0,  points: 0,   selfDropQty: 1 },
+  data_cable:          { gems: 0,  points: 0,   selfDropQty: 1 },
+  lamp_block:          { gems: 0,  points: 0,   selfDropQty: 1 },
+  battery_block:       { gems: 0,  points: 0,   selfDropQty: 1 },
+  generator_block:     { gems: 0,  points: 0,   selfDropQty: 1 },
+  clock_block:         { gems: 0,  points: 0,   selfDropQty: 1 },
 };
 
 // ─── Which blocks are "machine" components (placeable, special behaviour) ────
