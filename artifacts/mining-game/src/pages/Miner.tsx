@@ -243,9 +243,18 @@ export default function Miner() {
   //   gem_reward   — popup + 15s countdown + popup-close guard (full)
   //   drill_boost  — popup + 15s countdown + popup-close guard (full, verified)
   //   cool_down    — popup + 15s countdown, NO popup-close guard (simpler flow)
+  // Ref-based guard: blocks re-entry immediately (before React state updates).
+  // Prevents the double-click race where multiple popups open simultaneously
+  // before setAdRequesting(true) has had a chance to disable the button.
+  const adStartingRef = useRef(false);
+
   const startRewardedAd = useCallback(async (type: "drill_boost" | "cool_down" | "gem_reward") => {
+    if (adStartingRef.current) return; // immediate synchronous guard
+    adStartingRef.current = true;
+
     const userId = localStorage.getItem("userId");
     if (!userId) {
+      adStartingRef.current = false;
       toast({ title: "NOT LOGGED IN", description: "Please log in and try again.", variant: "destructive" });
       return;
     }
@@ -255,6 +264,7 @@ export default function Miner() {
     // We open "about:blank" now, then navigate to the real URL after the API call.
     const popup = window.open("about:blank", "_blank", "width=800,height=600,scrollbars=yes");
     if (!popup) {
+      adStartingRef.current = false;
       toast({
         title: "POPUP BLOCKED",
         description: "Allow popups for this site in your browser settings, then try again.",
@@ -264,9 +274,12 @@ export default function Miner() {
     }
 
     // ── Step 2: Call the server to create a timestamped task + get token ───
+    // Send `type` as BOTH a query param and in the JSON body.
+    // iOS Safari can strip the body when a popup is opened just before an async
+    // fetch — the query param is a reliable fallback the server checks first.
     setAdRequesting(true);
     try {
-      const res = await fetch("/api/monetization/request-task", {
+      const res = await fetch(`/api/monetization/request-task?type=${encodeURIComponent(type)}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -279,9 +292,10 @@ export default function Miner() {
 
       if (!res.ok || !data.success) {
         popup.close();
+        adStartingRef.current = false;
         toast({
           title: "REQUEST FAILED",
-          description: data.error || "Could not start ad task. Try again.",
+          description: data.error ?? data.message ?? "Could not start ad task. Try again.",
           variant: "destructive",
         });
         setAdRequesting(false);
@@ -289,8 +303,16 @@ export default function Miner() {
       }
 
       // ── Step 3: Navigate popup to the real Adsterra Smartlink ────────────
+      // data.adUrl is the Adsterra Direct Link returned by the server.
+      // No fallback — if the server didn't return a URL, close the popup and bail.
+      if (!data.adUrl) {
+        popup.close();
+        toast({ title: "AD URL MISSING", description: "Server did not return an ad URL. Try again.", variant: "destructive" });
+        setAdRequesting(false);
+        return;
+      }
       if (!popup.closed) {
-        popup.location.href = data.adUrl || "https://example.com/ad";
+        popup.location.href = data.adUrl;
       }
 
       // Store references for the countdown intervals
@@ -337,6 +359,7 @@ export default function Miner() {
 
     } catch {
       popup.close();
+      adStartingRef.current = false;
       setAdRequesting(false);
       toast({ title: "NETWORK ERROR", description: "Could not reach the server.", variant: "destructive" });
     }

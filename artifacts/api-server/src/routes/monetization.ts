@@ -62,10 +62,13 @@ router.post("/monetization/request-task", async (req, res) => {
     return;
   }
 
-  // Validate request body (type must be a known task type)
-  const bodyParsed = RequestMonetizationTaskBody.safeParse(req.body);
+  // Validate task type — check body first, then fall back to query param.
+  // On iOS Safari, opening a popup with window.open() before an async fetch can
+  // strip the request body. Sending ?type= as a URL param ensures we always have it.
+  const rawType = (req.body as Record<string, unknown>)?.type ?? req.query.type;
+  const bodyParsed = RequestMonetizationTaskBody.safeParse({ type: rawType });
   if (!bodyParsed.success) {
-    res.status(400).json({ error: "Invalid body" });
+    res.status(400).json({ error: "Invalid body", received: rawType });
     return;
   }
 
