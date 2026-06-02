@@ -170,6 +170,7 @@ export type MonetizationTaskInputType = typeof MonetizationTaskInputType[keyof t
 export const MonetizationTaskInputType = {
   drill_boost: 'drill_boost',
   cool_down: 'cool_down',
+  gem_reward: 'gem_reward',
 } as const;
 
 export interface MonetizationTaskInput {

@@ -657,7 +657,7 @@ components:
       properties:
         type:
           type: string
-          enum: [drill_boost, cool_down]
+          enum: [drill_boost, cool_down, gem_reward]
 
     MonetizationTaskResult:
       type: object

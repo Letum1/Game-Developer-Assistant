@@ -320,7 +320,7 @@ export const RequestMonetizationTaskHeader = zod.object({
 })
 
 export const RequestMonetizationTaskBody = zod.object({
-  "type": zod.enum(['drill_boost', 'cool_down'])
+  "type": zod.enum(['drill_boost', 'cool_down', 'gem_reward'])
 })
 
 export const RequestMonetizationTaskResponse = zod.object({

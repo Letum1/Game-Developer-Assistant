@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Rewarded Ads System</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121214;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #1a1a1e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        button {
+            background-color: #ff5722;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #f44336; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 999;
+        }
+        .status-msg { color: #ffeb3b; font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Gems Balance: <span id="balance">0</span> 💎</h2>
+    <p>Need more gems? Watch a short ad to earn 50 gems instantly!</p>
+    <button id="adBtn" onclick="startRewardedAd()">Watch Ad for Gems</button>
+</div>
+
+<!-- The Ad Progress Screen Overlay -->
+<div id="overlay">
+    <h2 id="timerText">Verifying Ad...</h2>
+    <p>Keep this tab open and active to secure your rewards.</p>
+    <p id="statusWarning" class="status-msg"></p>
+</div>
+
+<script>
+    let currentBalance = 0;
+    let timeLeft = 15;
+    let adTimer = null;
+    let integrityCheck = null;
+    let adWindow = null;
+    let isPaused = false;
+
+    const overlay = document.getElementById('overlay');
+    const timerText = document.getElementById('timerText');
+    const statusWarning = document.getElementById('statusWarning');
+    const adBtn = document.getElementById('adBtn');
+
+    function startRewardedAd() {
+        // Reset parameters
+        timeLeft = 15;
+        isPaused = false;
+        statusWarning.innerText = "";
+        adBtn.disabled = true;
+
+        // 1. Open the Adsterra Direct Link/Popup
+        // Replace with your real Adsterra Direct Link URL
+        adWindow = window.open('https://www.google.com', '_blank', 'width=800,height=600');
+
+        if (!adWindow) {
+            alert("Popup Blocker detected! Please allow popups to earn rewards.");
+            adBtn.disabled = false;
+            return;
+        }
+
+        // 2. Open our strict internal UI overlay
+        overlay.style.display = 'flex';
+        timerText.innerText = `Watching Ad: ${timeLeft}s remaining`;
+
+        // 3. Main Countdown Timer Loop
+        adTimer = setInterval(() => {
+            if (!isPaused) {
+                timeLeft--;
+                timerText.innerText = `Watching Ad: ${timeLeft}s remaining`;
+
+                if (timeLeft <= 0) {
+                    clearAllTimers();
+                    grantReward();
+                }
+            }
+        }, 1000);
+
+        // 4. Integrity Checker: Runs every 400ms to catch manual closures
+        integrityCheck = setInterval(() => {
+            if (adWindow && adWindow.closed) {
+                clearAllTimers();
+                overlay.style.display = 'none';
+                adBtn.disabled = false;
+                alert("Exploit detected: You closed the advertisement window early. No rewards issued.");
+            }
+        }, 400);
+    }
+
+    // Tab Visibility Handler: Pauses counting instantly if user leaves the tab
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden && adTimer) {
+            isPaused = true;
+            statusWarning.innerText = "⚠️ TIMER PAUSED: You left the page! Return here to resume.";
+        } else if (!document.hidden && adTimer) {
+            isPaused = false;
+            statusWarning.innerText = "";
+        }
+    });
+
+    function clearAllTimers() {
+        clearInterval(adTimer);
+        clearInterval(integrityCheck);
+        adTimer = null;
+        integrityCheck = null;
+    }
+
+    function grantReward() {
+        overlay.style.display = 'none';
+        adBtn.disabled = false;
+        
+        currentBalance += 50;
+        document.getElementById('balance').innerText = currentBalance;
+        
+        alert("Success! 50 Gems have been safely credited to your account.");
+        
+        // Context Note: In production, fire a secure network request here to log 
+        // timestamps against your server/database to verify the full 15 seconds passed.
+    }
+</script>
+
+</body>
+</html>
