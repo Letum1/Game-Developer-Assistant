@@ -53,8 +53,9 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 
-// ── Fuel constants (must stay in sync with server game-constants.ts) ──────────
-const MAX_FUEL        = 500;
+// ── Fuel / battery constants (must stay in sync with server game-constants.ts) ──
+const MAX_FUEL           = 500;   // diesel litres capacity
+const MAX_BATTERY_CHARGE = 500;   // Wh (watt-hours) capacity per full charge
 const FUEL_DRAIN_RATE = 0.05; // units per second per always-on block
 
 // ── Power-unit values for each block type (must match server scanMachineCluster) ──
@@ -494,12 +495,18 @@ export default function Miner() {
   const levelProgress = displayLevel >= MAX_LEVEL ? 100 : (displayLevel / MAX_LEVEL) * 100;
 
   // ── Fuel / battery calculations ──────────────────────────────────────────
-  const generators  = miner.generators ?? 0;
-  const fuel        = miner.fuel ?? 0;
-  const fuelPct     = Math.min(100, Math.round((fuel / MAX_FUEL) * 100));
-  const drainPerSec = generators * FUEL_DRAIN_RATE;
-  const fuelTimeSec = drainPerSec > 0 ? fuel / drainPerSec : 0;
+  const generators    = miner.generators ?? 0;
+  const fuel          = miner.fuel ?? 0;
+  const fuelPct       = Math.min(100, Math.round((fuel / MAX_FUEL) * 100));
+  const drainPerSec   = generators * FUEL_DRAIN_RATE;
+  const fuelTimeSec   = drainPerSec > 0 ? fuel / drainPerSec : 0;
   const hasFuelSource = generators > 0;
+
+  // Battery is separate from fuel — it stores solar energy as electrical charge (Wh)
+  const batteryCount  = miner.batteries ?? 0;
+  const batteryCharge = miner.batteryCharge ?? 0;
+  const battPct       = Math.min(100, Math.round((batteryCharge / MAX_BATTERY_CHARGE) * 100));
+  const hasBattery    = batteryCount > 0;
 
   const formatFuelTime = (secs: number) => {
     if (secs <= 0 || !hasFuelSource) return "—";
@@ -744,38 +751,125 @@ export default function Miner() {
           </Card>
         </div>
 
-        {/* ── Fuel / Battery Status Card (only shown when always-on blocks exist) ── */}
+        {/* ── Generator Diesel Tank ────────────────────────────────────────────
+             Diesel is a physical liquid stored in the generator block.
+             Completely separate from battery charge — this is NOT electricity. */}
         {hasFuelSource && (
-          <Card className={`border ${fuel === 0 ? "border-destructive/70 animate-pulse" : fuel < MAX_FUEL * 0.2 ? "border-orange-500/60" : "border-yellow-500/30"} bg-black/60`}>
+          <Card className={`border ${
+            fuel === 0
+              ? "border-destructive/70 animate-pulse"
+              : fuel < MAX_FUEL * 0.2
+              ? "border-orange-500/60"
+              : "border-orange-900/50"
+          } bg-black/60`}>
             <CardHeader>
-              <CardTitle className="text-muted-foreground uppercase text-xs tracking-widest flex items-center">
-                <BatteryCharging className="w-4 h-4 mr-2" /> Fuel / Battery Charge
+              <CardTitle className="text-orange-400 uppercase text-xs tracking-widest flex items-center gap-2">
+                <Fuel className="w-4 h-4" /> Diesel Fuel Tank
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className={`text-4xl font-black tabular-nums ${fuel === 0 ? "text-destructive" : fuel < MAX_FUEL * 0.2 ? "text-orange-400" : "text-yellow-400"}`}>
-                  {fuelPct}%
-                </span>
-                <span className="text-muted-foreground text-xs uppercase tracking-widest text-right">
-                  {fuel} / {MAX_FUEL} units<br />
-                  {hasFuelSource && fuel > 0 ? `~${formatFuelTime(fuelTimeSec)} remaining` : fuel === 0 ? "EMPTY — refuel generator" : ""}
-                </span>
+            <CardContent className="space-y-3">
+              {/* Big liquid level reading */}
+              <div className="flex items-end justify-between">
+                <div>
+                  <span className={`text-4xl font-black tabular-nums ${
+                    fuel === 0 ? "text-destructive" : fuel < MAX_FUEL * 0.2 ? "text-orange-400" : "text-orange-300"
+                  }`}>
+                    {fuel}
+                  </span>
+                  <span className="text-orange-600 text-xs font-bold ml-1 uppercase tracking-widest">L</span>
+                </div>
+                <div className="text-right text-xs text-muted-foreground uppercase tracking-widest">
+                  <div>Capacity: {MAX_FUEL} L</div>
+                  <div className={fuel === 0 ? "text-destructive font-bold" : fuel < MAX_FUEL * 0.2 ? "text-orange-400 font-bold" : "text-orange-500"}>
+                    {fuel === 0 ? "⛽ EMPTY" : `~${formatFuelTime(fuelTimeSec)} left`}
+                  </div>
+                </div>
               </div>
-              {/* Fuel bar — color shifts red when low */}
-              <div className="w-full h-3 rounded bg-black/60 border border-border overflow-hidden">
+              {/* Liquid-level bar — amber/orange, not a battery bar */}
+              <div className="relative w-full h-5 rounded bg-black/80 border border-orange-900/60 overflow-hidden">
                 <div
                   className="h-full transition-all duration-1000"
                   style={{
                     width: `${fuelPct}%`,
-                    backgroundColor: fuel === 0 ? "#ef4444" : fuel < MAX_FUEL * 0.2 ? "#f97316" : "#eab308",
+                    background: fuel === 0
+                      ? "#ef4444"
+                      : fuel < MAX_FUEL * 0.2
+                      ? "linear-gradient(90deg, #ea580c, #f97316)"
+                      : "linear-gradient(90deg, #b45309, #d97706, #f59e0b)",
                   }}
                 />
+                {/* Liquid fill level label inside bar */}
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-white/80 mix-blend-overlay">
+                  {fuelPct}% Full
+                </span>
               </div>
-              <p className="text-muted-foreground text-xs leading-relaxed">
+              <p className="text-muted-foreground text-[11px] leading-relaxed">
                 {fuel === 0
-                  ? "⚠ Generator is out of fuel — rig running on solar only."
-                  : "Tap a Generator or Battery block in the game world while holding a Diesel Can to refuel."}
+                  ? "⚠️ Generator is dry — miner has no diesel power. Equip a Diesel Can and tap a Generator block to refuel."
+                  : `⛽ ${generators} generator${generators > 1 ? "s" : ""} running — consuming ${(drainPerSec * 3600).toFixed(1)} L/hr of diesel.`}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Solar Battery Charge ──────────────────────────────────────────────
+             Battery stores electrical energy charged by solar panels.
+             This is NOT fuel — it is stored electricity measured in Wh.
+             Discharges at night to keep rigs powered when solar is off. */}
+        {hasBattery && (
+          <Card className={`border ${
+            batteryCharge === 0
+              ? "border-yellow-700/50"
+              : battPct > 80
+              ? "border-cyan-500/50"
+              : "border-blue-900/50"
+          } bg-black/60`}>
+            <CardHeader>
+              <CardTitle className="text-cyan-400 uppercase text-xs tracking-widest flex items-center gap-2">
+                <BatteryCharging className="w-4 h-4" /> Solar Battery Charge
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Big Wh reading */}
+              <div className="flex items-end justify-between">
+                <div>
+                  <span className={`text-4xl font-black tabular-nums ${
+                    batteryCharge === 0 ? "text-muted-foreground" : battPct > 80 ? "text-cyan-300" : "text-blue-400"
+                  }`}>
+                    {batteryCharge}
+                  </span>
+                  <span className="text-blue-600 text-xs font-bold ml-1 uppercase tracking-widest">Wh</span>
+                </div>
+                <div className="text-right text-xs text-muted-foreground uppercase tracking-widest">
+                  <div>Capacity: {MAX_BATTERY_CHARGE} Wh</div>
+                  <div className={batteryCharge === 0 ? "text-yellow-600" : "text-cyan-600"}>
+                    {batteryCharge === 0 ? "🔋 Drained" : battPct >= 100 ? "⚡ Full" : `${battPct}% charged`}
+                  </div>
+                </div>
+              </div>
+              {/* Charge bar — blue/cyan, like a phone battery */}
+              <div className="relative w-full h-5 rounded bg-black/80 border border-blue-900/60 overflow-hidden">
+                <div
+                  className="h-full transition-all duration-1000"
+                  style={{
+                    width: `${battPct}%`,
+                    background: batteryCharge === 0
+                      ? "#374151"
+                      : battPct > 80
+                      ? "linear-gradient(90deg, #0284c7, #22d3ee, #67e8f9)"
+                      : "linear-gradient(90deg, #1d4ed8, #3b82f6)",
+                  }}
+                />
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-white/80 mix-blend-overlay">
+                  {battPct}% Charged
+                </span>
+              </div>
+              <p className="text-muted-foreground text-[11px] leading-relaxed">
+                {batteryCharge === 0
+                  ? "🌙 Battery drained — will recharge from solar panels when the sun rises."
+                  : (miner as any).batteryActive
+                  ? `🌙 Discharging — powering ${batteryCount} battery unit${batteryCount > 1 ? "s" : ""} through the night.`
+                  : `☀️ Charging from solar panels during the day. Discharges at night to power rigs.`}
               </p>
             </CardContent>
           </Card>
