@@ -13,7 +13,9 @@
 //
 // Tick logic:
 //   • Balance  += minerRate(activeRigs) × elapsed (only while running)
-//   • Temp     += max(0, TEMP_RISE - fans × FAN_COOLING) / 3600 × elapsed
+//   • Temp     += max(MIN_HEAT, rigHeat + battHeat + genHeat − fans×FAN_COOLING) / 3600 × elapsed
+//   • Heat is per-appliance: rigs 20°C/hr, batteries 8°C/hr, generators 30°C/hr
+//   • Fans slow heat (−15°C/hr each) but can never eliminate it (floor = 5°C/hr)
 //   • battery_charge charged by solar during day; drained at night by batteries
 //   • fuel (diesel) drained by generators continuously
 //   • is_running updated based on temp < MAX_TEMP AND hasPower AND rigCount > 0
@@ -23,8 +25,11 @@
 import { pool } from "./db-pool";
 import {
   MINER_RATES,
-  TEMP_RISE_PER_HOUR,
+  HEAT_PER_RIG_PER_HOUR,
+  HEAT_PER_BATTERY_PER_HOUR,
+  HEAT_PER_GENERATOR_PER_HOUR,
   FAN_COOLING_PER_HOUR,
+  MIN_HEAT_PER_HOUR,
   MAX_TEMP,
   MAX_BATTERY_CHARGE,
   MAX_FUEL,
@@ -113,7 +118,13 @@ async function tickMiner(userId: number): Promise<boolean> {
 
     if (isRunning && elapsedSeconds > 0) {
       newBalance += minerRate(activeRigs) * elapsedSeconds;
-      const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+      // Per-appliance heat: mirrors miner.ts tick and formatMiner exactly
+      const heatFromRigs       = activeRigs                           * HEAT_PER_RIG_PER_HOUR;
+      const heatFromBatteries  = batteries                            * HEAT_PER_BATTERY_PER_HOUR;
+      const heatFromGenerators = generatorActive ? generators         * HEAT_PER_GENERATOR_PER_HOUR : 0;
+      const rawHeat            = heatFromRigs + heatFromBatteries + heatFromGenerators;
+      // Fans slow heat rise but can never fully stop it (MIN_HEAT_PER_HOUR floor)
+      const effectiveTempRise  = Math.max(MIN_HEAT_PER_HOUR, rawHeat - fans * FAN_COOLING_PER_HOUR);
       newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }
 

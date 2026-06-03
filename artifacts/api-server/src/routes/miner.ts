@@ -11,8 +11,11 @@ import {
   MINER_RATES,
   MINER_UPGRADE_COSTS,
   UPGRADE_POINTS_REQUIRED,
-  TEMP_RISE_PER_HOUR,
+  HEAT_PER_RIG_PER_HOUR,
+  HEAT_PER_BATTERY_PER_HOUR,
+  HEAT_PER_GENERATOR_PER_HOUR,
   FAN_COOLING_PER_HOUR,
+  MIN_HEAT_PER_HOUR,
   MAX_TEMP,
   MAX_FUEL,
   MAX_BATTERY_CHARGE,
@@ -32,11 +35,11 @@ function minerRate(activeRigs: number): number {
 }
 
 // ─── Format DB row → API response shape ──────────────────────────────────────
-// Power sources are now separate:
-//   batteries / battery_charge — solar-charged night storage
-//   generators / fuel          — always-on diesel
-// Drill boost: if drill_boost_until is in the future, ratePerSecond is multiplied
-// by DRILL_BOOST_MULTIPLIER (1.5×) to represent the +0.5 TH overcharge effect.
+// Power sources — each has strict day/night/fuel rules:
+//   Solar panels  → power only when dayFactor > 0.15 (daytime); also charge batteries
+//   Batteries     → store solar energy; discharge to power rigs at night only
+//   Generators    → always-on diesel power while fuel > 0
+// formatMiner mirrors the same power logic as the tick so the dashboard is never wrong.
 function formatMiner(m: Record<string, unknown>) {
   const rigCount      = parseInt(m.level          as string) || 0;
   const fanCount      = parseInt(m.fans           as string) || 0;
@@ -46,8 +49,21 @@ function formatMiner(m: Record<string, unknown>) {
   const generators    = parseInt(m.generators     as string) || 0;
   const fuelLevel     = parseInt(m.fuel           as string) || 0;
 
-  const powerSupply  = solarPanels + batteries + generators;
-  const activeRigs   = Math.min(rigCount, powerSupply);
+  // ── Power supply — must mirror tick logic exactly ────────────────────────
+  // BUG FIX: the old code used solarPanels+batteries+generators unconditionally,
+  // so the dashboard showed solar panels providing power even at night. Now we
+  // apply the same day/night + fuel checks that the tick uses.
+  const dayFactor        = getDayFactor(Date.now());
+  const solarActive      = solarPanels   > 0 && dayFactor > 0.15;
+  const batteryActive    = batteries     > 0 && batteryCharge > 0 && !solarActive;
+  const generatorActive  = generators    > 0 && fuelLevel > 0;
+
+  const solarPower       = solarActive     ? solarPanels   : 0;
+  const batteryPower     = batteryActive   ? batteries     : 0;
+  const generatorPower   = generatorActive ? generators    : 0;
+  const powerSupply      = solarPower + batteryPower + generatorPower;
+  const activeRigs       = Math.min(rigCount, powerSupply);
+
   const nextUpgradeCost   = MINER_UPGRADE_COSTS[rigCount] ?? null;
   const nextUpgradePoints = UPGRADE_POINTS_REQUIRED[rigCount] ?? null;
 
@@ -57,17 +73,20 @@ function formatMiner(m: Record<string, unknown>) {
     : null;
   const now              = new Date();
   const isDrillBoosted   = drillBoostUntil !== null && drillBoostUntil > now;
-  // Additive bonus: +0.50 TH worth of rate (not a percentage multiplier)
   const boostRateBonus   = isDrillBoosted ? DRILL_BOOST_RATE_BONUS : 0;
   const drillBoostToday  = parseInt(m.drill_boost_today as string) || 0;
 
-  // ── Heat production stats ──────────────────────────────────────────────────
-  // heatRisePerHour: base heat produced per hour while running (always 100°C/hr)
-  // coolingPerHour:  total cooling provided by fan blocks (25°C/hr each)
-  // netHeatPerHour:  net temperature change per hour — 0 means stable temperature
-  const heatRisePerHour  = TEMP_RISE_PER_HOUR;                                  // 100 °C/hr base
-  const coolingPerHour   = fanCount * FAN_COOLING_PER_HOUR;                     // 25 °C/hr per fan
-  const netHeatPerHour   = Math.max(0, heatRisePerHour - coolingPerHour);       // 0 = stable
+  // ── Per-appliance heat production ─────────────────────────────────────────
+  // Heat is produced by each running appliance independently.
+  // Fans SLOW DOWN the rate but never eliminate it — overheat is inevitable.
+  // Only count generator heat when it actually has fuel (otherwise it's off).
+  const heatFromRigs       = activeRigs  * HEAT_PER_RIG_PER_HOUR;
+  const heatFromBatteries  = batteries   * HEAT_PER_BATTERY_PER_HOUR;          // batteries always warm
+  const heatFromGenerators = generatorActive ? generators * HEAT_PER_GENERATOR_PER_HOUR : 0;
+  const rawHeatPerHour     = heatFromRigs + heatFromBatteries + heatFromGenerators;
+  const coolingPerHour     = fanCount * FAN_COOLING_PER_HOUR;
+  // MIN_HEAT_PER_HOUR is the floor — heat can never be reduced to 0
+  const netHeatPerHour     = Math.max(MIN_HEAT_PER_HOUR, rawHeatPerHour - coolingPerHour);
 
   return {
     userId: m.user_id,
@@ -82,23 +101,31 @@ function formatMiner(m: Record<string, unknown>) {
     powerSupply,
     powerDemand: rigCount,
     activeRigs,
+    // Per-source power breakdown for dashboard display
+    solarPower,
+    batteryPower,
+    generatorPower,
+    solarActive,
+    batteryActive,
+    generatorActive,
     unlocked: m.unlocked,
     currentBalance: parseFloat(m.current_balance as string),
     temperature: parseFloat(m.temperature as string),
     isRunning: m.is_running,
     lastMaintenanceAt: (m.last_maintenance_at as Date).toISOString(),
     lastTickAt: (m.last_tick_at as Date).toISOString(),
-    // Additive boost: +0.50 TH rate bonus (not a ×1.5 multiplier)
     ratePerSecond: minerRate(activeRigs) + boostRateBonus,
     nextUpgradeCost,
     nextUpgradePoints,
-    // Drill boost metadata for the dashboard
     isDrillBoosted,
     drillBoostUntil: drillBoostUntil?.toISOString() ?? null,
     drillBoostToday,
     drillBoostMaxPerDay: DRILL_BOOST_MAX_PER_DAY,
-    // Heat production stats for the dashboard thermal panel
-    heatRisePerHour,
+    // Per-appliance heat breakdown — shown on dashboard so players understand their temps
+    heatFromRigs,
+    heatFromBatteries,
+    heatFromGenerators,
+    rawHeatPerHour,
     coolingPerHour,
     netHeatPerHour,
   };
@@ -200,7 +227,15 @@ router.post("/miner/tick", async (req, res) => {
 
     if (isRunning && elapsedSeconds > 0) {
       newBalance += (minerRate(activeRigs) + boostRateBonus) * elapsedSeconds;
-      const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+
+      // ── Per-appliance heat — mirrors formatMiner logic exactly ──────────────
+      // Heat is produced by each running appliance; fans slow it but never stop it.
+      const heatFromRigs       = activeRigs                           * HEAT_PER_RIG_PER_HOUR;
+      const heatFromBatteries  = batteries                            * HEAT_PER_BATTERY_PER_HOUR;
+      const heatFromGenerators = generatorActive ? generators         * HEAT_PER_GENERATOR_PER_HOUR : 0;
+      const rawHeat            = heatFromRigs + heatFromBatteries + heatFromGenerators;
+      // Fans reduce the rate; MIN_HEAT_PER_HOUR is the floor (overheat is always inevitable)
+      const effectiveTempRise  = Math.max(MIN_HEAT_PER_HOUR, rawHeat - fans * FAN_COOLING_PER_HOUR);
       newTemp = Math.min(MAX_TEMP, temp + (effectiveTempRise / 3600) * elapsedSeconds);
     }
 

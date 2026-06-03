@@ -129,9 +129,6 @@ export const MINER_RATES: Record<number, number> = {
   9:  30 / 86400,   // platform ceiling
 };
 
-// ─── Fan cooling constant ──────────────────────────────────────────────────────
-export const FAN_COOLING_PER_HOUR = 25;
-
 // ─── Gem cost to upgrade the rig via the Miner page ──────────────────────────
 export const MINER_UPGRADE_COSTS: Record<number, number> = {
   1:  50,
@@ -157,7 +154,18 @@ export const UPGRADE_POINTS_REQUIRED: Record<number, number> = {
 };
 
 // ─── Temperature system ───────────────────────────────────────────────────────
-export const TEMP_RISE_PER_HOUR = 100;
+// Heat is ALWAYS produced while the rig is running — overheat is inevitable.
+// Fans reduce the rate but cannot bring it to zero (MIN_HEAT_PER_HOUR is the floor).
+// Each appliance contributes its own heat:
+//   • Mining Rig blocks  → 20 °C/hr each (CPU-heavy computation)
+//   • Battery blocks     → 8 °C/hr each  (charge cycling heat)
+//   • Generator blocks   → 30 °C/hr each (diesel combustion heat)
+//   • Fan blocks         → −15 °C/hr each (cooling — reduces but never eliminates)
+export const HEAT_PER_RIG_PER_HOUR       = 20;  // °C/hr per active mining rig
+export const HEAT_PER_BATTERY_PER_HOUR   = 8;   // °C/hr per battery block (active or not)
+export const HEAT_PER_GENERATOR_PER_HOUR = 30;  // °C/hr per generator block (only when running)
+export const FAN_COOLING_PER_HOUR        = 15;  // °C/hr cooling per fan block
+export const MIN_HEAT_PER_HOUR           = 5;   // °C/hr floor — overheat is always inevitable
 export const MAX_TEMP = 100;
 
 // ─── Power source fuel systems ────────────────────────────────────────────────

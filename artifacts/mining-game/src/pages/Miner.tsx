@@ -815,74 +815,102 @@ export default function Miner() {
                   {powerSupply} / {powerDemand} units
                 </span>
               </div>
-              {/* Solar panels */}
-              <div className="flex justify-between items-center pb-2 border-b border-border">
-                <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                  <Sun className="w-3 h-3 text-yellow-400" /> Solar
-                </span>
-                <span className="text-yellow-400 font-bold">{miner.solarPanels}</span>
-              </div>
-              {/* Always-on (battery + generator) */}
-              <div className="flex justify-between items-center pb-2 border-b border-border">
-                <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                  <Fuel className="w-3 h-3 text-orange-400" /> Always-On
-                </span>
-                <span className="text-orange-400 font-bold">{miner.generators}</span>
-              </div>
               {/* Cooling fans */}
               <div className="flex justify-between items-center pb-2 border-b border-border">
                 <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
                   <Snowflake className="w-3 h-3 text-cyan-400" /> Cooling Fans
                 </span>
                 <span className={fanCount === 0 ? "text-muted-foreground font-bold" : "text-cyan-400 font-bold"}>
-                  {fanCount} {fanCount >= 4 ? "✓ optimal" : fanCount > 0 ? `(${4 - fanCount} more to zero out heat)` : "(add fans to reduce overheat)"}
+                  {fanCount} {fanCount > 0 ? `(−${fanCount * 15} °C/hr — slows overheat)` : "(add fans to slow overheat)"}
                 </span>
               </div>
 
-              {/* ── Thermal / Power stats ─────────────────────────────────────
-                  Shows how much heat the rig produces, how much fans remove,
-                  and the net temperature change per hour while running.       */}
+              {/* ── Power source breakdown ────────────────────────────────────
+                  Shows whether each power source is currently active or idle.
+                  Solar only works during the day. Batteries only discharge at
+                  night. Generator requires fuel. This mirrors server tick logic
+                  so the display is always accurate.                           */}
               {(() => {
-                const am            = miner as any;
-                const heatRise      = am.heatRisePerHour  ?? 100;               // base 100°C/hr
-                const cooling       = am.coolingPerHour   ?? 0;                  // 25°C/hr per fan
-                const netHeat       = am.netHeatPerHour   ?? Math.max(0, heatRise - cooling);
-                const isStable      = netHeat === 0;
-                const powerConsumed = (miner as any).activeRigs ?? 0;            // 1 unit per active rig
-                const totalTH       = (miner as any).rigCount   ?? 0;            // total TH (rig blocks)
-                const boostedTH     = (miner as any).isDrillBoosted ? totalTH + 0.5 : totalTH;
+                const am             = miner as any;
+                const solarAct       = !!am.solarActive;
+                const battAct        = !!am.batteryActive;
+                const genAct         = !!am.generatorActive;
+                const solarPow       = (am.solarPower      ?? 0) as number;
+                const battPow        = (am.batteryPower     ?? 0) as number;
+                const genPow         = (am.generatorPower   ?? 0) as number;
+                // Per-appliance heat
+                const heatRigs       = (am.heatFromRigs       ?? 0) as number;
+                const heatBatt       = (am.heatFromBatteries  ?? 0) as number;
+                const heatGen        = (am.heatFromGenerators ?? 0) as number;
+                const rawHeat        = (am.rawHeatPerHour     ?? heatRigs + heatBatt + heatGen) as number;
+                const cooling        = (am.coolingPerHour     ?? 0) as number;
+                const netHeat        = (am.netHeatPerHour     ?? Math.max(5, rawHeat - cooling)) as number;
+                const boostedTH      = miner.isDrillBoosted ? miner.rigCount + 0.5 : miner.rigCount;
                 return (
                   <>
-                    {/* Heat produced */}
+                    {/* ── Power sources (day/night aware) ─────────────────── */}
                     <div className="flex justify-between items-center pb-2 border-b border-border">
                       <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                        <Thermometer className="w-3 h-3 text-red-400" /> Heat Produced
+                        <Sun className="w-3 h-3 text-yellow-400" /> Solar
                       </span>
-                      <span className="text-red-400 font-bold">{heatRise} °C/hr</span>
+                      <span className={solarAct ? "text-yellow-400 font-bold" : "text-muted-foreground font-bold"}>
+                        {solarAct ? `${solarPow} units ☀️ active` : `${miner.solarPanels} panels — night`}
+                      </span>
                     </div>
-                    {/* Cooling capacity */}
                     <div className="flex justify-between items-center pb-2 border-b border-border">
                       <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                        <Snowflake className="w-3 h-3 text-blue-400" /> Heat Removed
+                        <Activity className="w-3 h-3 text-blue-400" /> Battery
                       </span>
-                      <span className="text-blue-400 font-bold">{cooling} °C/hr</span>
+                      <span className={battAct ? "text-blue-400 font-bold" : "text-muted-foreground font-bold"}>
+                        {battAct ? `${battPow} units discharging` : miner.batteries > 0 ? "charging / standby" : "none placed"}
+                      </span>
                     </div>
-                    {/* Net heat — 0 means rig stays cool indefinitely */}
                     <div className="flex justify-between items-center pb-2 border-b border-border">
                       <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                        <Activity className="w-3 h-3 text-orange-400" /> Net Heat
+                        <Fuel className="w-3 h-3 text-orange-400" /> Generator
                       </span>
-                      <span className={isStable ? "text-primary font-bold" : "text-orange-400 font-bold"}>
-                        {isStable ? "0 °C/hr ✓ stable" : `+${netHeat} °C/hr`}
+                      <span className={genAct ? "text-orange-400 font-bold" : "text-muted-foreground font-bold"}>
+                        {genAct ? `${genPow} units running` : miner.generators > 0 ? "no fuel" : "none placed"}
                       </span>
                     </div>
-                    {/* Power consumed */}
-                    <div className="flex justify-between items-center pb-2 border-b border-border">
-                      <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
-                        <Zap className="w-3 h-3 text-yellow-400" /> Power Used
-                      </span>
-                      <span className="text-yellow-400 font-bold">{powerConsumed} / {powerSupply} units</span>
-                    </div>
+
+                    {/* ── Heat breakdown (per appliance) ──────────────────── */}
+                    {/* Each appliance contributes heat; fans slow but can't stop it */}
+                    {rawHeat > 0 && (
+                      <div className="border border-red-900/40 rounded p-2 space-y-1 bg-red-950/20">
+                        <p className="text-red-400 text-[10px] uppercase tracking-widest font-bold">Heat Production Breakdown</p>
+                        {heatRigs > 0 && (
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span>⛏ Mining Rigs ({miner.activeRigs} active)</span>
+                            <span className="text-red-400">+{heatRigs} °C/hr</span>
+                          </div>
+                        )}
+                        {heatBatt > 0 && (
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span>🔋 Batteries ({miner.batteries} blocks)</span>
+                            <span className="text-red-400">+{heatBatt} °C/hr</span>
+                          </div>
+                        )}
+                        {heatGen > 0 && (
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span>⚙️ Generators ({miner.generators} running)</span>
+                            <span className="text-red-400">+{heatGen} °C/hr</span>
+                          </div>
+                        )}
+                        {cooling > 0 && (
+                          <div className="flex justify-between text-[10px] text-muted-foreground">
+                            <span>💨 Fans ({fanCount} cooling)</span>
+                            <span className="text-blue-400">−{cooling} °C/hr</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-[10px] font-bold border-t border-red-900/40 pt-1 mt-1">
+                          <span className="text-orange-400 uppercase tracking-widest">Net Heat Rate</span>
+                          {/* MIN floor of 5°C/hr — overheat is always inevitable */}
+                          <span className="text-orange-400">+{netHeat} °C/hr{netHeat <= 5 ? " (min floor)" : ""}</span>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Effective TH including any drill boost */}
                     <div className="flex justify-between items-center pb-2 border-b border-border">
                       <span className="text-muted-foreground uppercase text-xs tracking-widest flex items-center gap-1">
@@ -890,7 +918,7 @@ export default function Miner() {
                       </span>
                       <span className="text-cyan-400 font-bold">
                         {boostedTH.toFixed(boostedTH % 1 === 0 ? 0 : 2)} TH
-                        {(miner as any).isDrillBoosted && (
+                        {miner.isDrillBoosted && (
                           <span className="text-cyan-300 text-[10px] ml-1">(+0.50 boost)</span>
                         )}
                       </span>
@@ -921,7 +949,7 @@ export default function Miner() {
                     <div className="flex justify-between"><span>⛏ Mining Rig block</span><span className="text-primary font-bold">+1 TH, needs 1 power</span></div>
                     <div className="flex justify-between"><span className="flex items-center gap-1"><Sun className="w-3 h-3 text-yellow-400" /> Solar Panel</span><span className="text-yellow-400 font-bold">+1 power unit</span></div>
                     <div className="flex justify-between"><span className="flex items-center gap-1"><Fuel className="w-3 h-3 text-orange-400" /> Generator</span><span className="text-orange-400 font-bold">+2 power units</span></div>
-                    <div className="flex justify-between"><span>💨 Cooling Fan</span><span className="text-cyan-400 font-bold">−2.5°C/hr each</span></div>
+                    <div className="flex justify-between"><span>💨 Cooling Fan</span><span className="text-cyan-400 font-bold">−15°C/hr (slows, never stops heat)</span></div>
                   </div>
                   <Link href="/game">
                     <Button size="sm" className="w-full mt-1 bg-primary/15 text-primary border border-primary/40 hover:bg-primary hover:text-black uppercase tracking-widest font-bold text-[10px]">
