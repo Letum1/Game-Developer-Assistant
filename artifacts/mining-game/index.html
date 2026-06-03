@@ -19,10 +19,28 @@
 
     <!-- ═══════════════════════════════════════════════════════════════════
          ADSTERRA — Popunder
-         async + defer so it NEVER blocks HTML parsing or React boot.
-         Fires a popunder on first user interaction after the page loads.
+         The popunder fires on the first user interaction, BUT we intercept
+         window.open() to silently block it while the player is on the game
+         or craft pages (/game, /craft). It will still fire normally on all
+         other pages (store, miner, leaderboard, etc.).
          Dashboard: beta.publishers.adsterra.com
     ═══════════════════════════════════════════════════════════════════ -->
+    <script>
+      // Guard: intercept window.open so the popunder cannot redirect players
+      // away while they are actively gaming or crafting. On all other routes
+      // the popunder fires normally as intended.
+      (function () {
+        var _origOpen = window.open.bind(window);
+        window.open = function () {
+          var path = window.location.pathname || "";
+          // Block on /game/* and /craft/* routes — these are interactive canvas pages
+          if (path.indexOf("/game") === 0 || path.indexOf("/craft") === 0) {
+            return null;
+          }
+          return _origOpen.apply(window, arguments);
+        };
+      })();
+    </script>
     <script async defer src="https://pl29614133.effectivecpmnetwork.com/b4/8f/7d/b48f7de69fdfe29e02092c3f75b57777.js"></script>
 
     <style>
