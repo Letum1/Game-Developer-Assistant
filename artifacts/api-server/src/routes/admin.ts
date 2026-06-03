@@ -38,16 +38,19 @@ async function requireAdmin(req: Request, res: Response, next: () => void) {
   }
 
   try {
-    // Confirm this user ID actually belongs to the configured admin username
+    // Confirm this user ID belongs to the root admin username OR has is_admin flag
     const result = await pool.query(
-      "SELECT username FROM users WHERE id = $1",
+      "SELECT username, COALESCE(is_admin, false) AS is_admin FROM users WHERE id = $1",
       [userId]
     );
     if (result.rows.length === 0) {
       res.status(401).json({ error: "User not found" });
       return;
     }
-    if (result.rows[0].username !== ADMIN_USERNAME) {
+    const row = result.rows[0];
+    const isRootAdmin = row.username === ADMIN_USERNAME;
+    const isGrantedAdmin = row.is_admin === true;
+    if (!isRootAdmin && !isGrantedAdmin) {
       // Return 403 so non-admins can't probe which user IDs are admin
       res.status(403).json({ error: "Admin access required" });
       return;
@@ -65,18 +68,22 @@ async function requireAdmin(req: Request, res: Response, next: () => void) {
 router.use("/admin", requireAdmin as any);
 
 // ── GET /api/admin/users — list every player ──────────────────────────────
-// Returns id, username, gems, and miner level for a quick overview.
+// Returns id, username, gems, miner level, and moderation flags.
 router.get("/admin/users", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
         u.id,
         u.username,
-        COALESCE(w.gems, 0)   AS gems,
-        COALESCE(m.level, 0)  AS miner_level,
-        COALESCE(m.temperature, 0) AS temperature,
-        COALESCE(m.is_running, false) AS is_running,
-        COALESCE(m.unlocked, false) AS miner_unlocked
+        COALESCE(w.gems, 0)               AS gems,
+        COALESCE(m.level, 0)              AS miner_level,
+        COALESCE(m.temperature, 0)        AS temperature,
+        COALESCE(m.is_running, false)     AS is_running,
+        COALESCE(m.unlocked, false)       AS miner_unlocked,
+        COALESCE(u.adblock_detected, false) AS adblock_detected,
+        COALESCE(u.is_banned, false)      AS is_banned,
+        COALESCE(u.is_muted, false)       AS is_muted,
+        COALESCE(u.is_admin, false)       AS is_admin
       FROM users u
       LEFT JOIN wallets w  ON w.user_id = u.id
       LEFT JOIN miners  m  ON m.user_id = u.id
@@ -86,6 +93,100 @@ router.get("/admin/users", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Admin list users error");
     res.status(500).json({ error: "Failed to list users" });
+  }
+});
+
+// ── POST /api/admin/ban-user — ban a player (blocks login) ────────────────
+// Body: { userId: number }
+router.post("/admin/ban-user", async (req, res) => {
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_banned = true WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} banned` });
+  } catch (err) {
+    req.log.error({ err }, "ban-user error");
+    res.status(500).json({ error: "Failed to ban user" });
+  }
+});
+
+// ── POST /api/admin/unban-user — lift a ban ───────────────────────────────
+router.post("/admin/unban-user", async (req, res) => {
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_banned = false WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} unbanned` });
+  } catch (err) {
+    req.log.error({ err }, "unban-user error");
+    res.status(500).json({ error: "Failed to unban user" });
+  }
+});
+
+// ── POST /api/admin/mute-user — mute a player (blocks chat) ──────────────
+router.post("/admin/mute-user", async (req, res) => {
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_muted = true WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} muted` });
+  } catch (err) {
+    req.log.error({ err }, "mute-user error");
+    res.status(500).json({ error: "Failed to mute user" });
+  }
+});
+
+// ── POST /api/admin/unmute-user — lift a mute ─────────────────────────────
+router.post("/admin/unmute-user", async (req, res) => {
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_muted = false WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} unmuted` });
+  } catch (err) {
+    req.log.error({ err }, "unmute-user error");
+    res.status(500).json({ error: "Failed to unmute user" });
+  }
+});
+
+// ── POST /api/admin/grant-admin — give admin powers to a player ───────────
+// Only the root admin (ADMIN_USERNAME) can grant/revoke admin powers,
+// to prevent privilege escalation chains.
+router.post("/admin/grant-admin", async (req, res) => {
+  // Extra guard: only root admin can grant/revoke admin
+  const rawId = req.headers["x-user-id"];
+  const callerRes = await pool.query("SELECT username FROM users WHERE id = $1", [parseInt(rawId as string)]);
+  if (callerRes.rows[0]?.username !== ADMIN_USERNAME) {
+    res.status(403).json({ error: "Only the root admin can grant/revoke admin access" });
+    return;
+  }
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_admin = true WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} granted admin` });
+  } catch (err) {
+    req.log.error({ err }, "grant-admin error");
+    res.status(500).json({ error: "Failed to grant admin" });
+  }
+});
+
+// ── POST /api/admin/revoke-admin — remove admin powers ───────────────────
+router.post("/admin/revoke-admin", async (req, res) => {
+  const rawId = req.headers["x-user-id"];
+  const callerRes = await pool.query("SELECT username FROM users WHERE id = $1", [parseInt(rawId as string)]);
+  if (callerRes.rows[0]?.username !== ADMIN_USERNAME) {
+    res.status(403).json({ error: "Only the root admin can grant/revoke admin access" });
+    return;
+  }
+  const { userId } = req.body as { userId?: number };
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  try {
+    await pool.query("UPDATE users SET is_admin = false WHERE id = $1", [userId]);
+    res.json({ success: true, message: `User ${userId} admin revoked` });
+  } catch (err) {
+    req.log.error({ err }, "revoke-admin error");
+    res.status(500).json({ error: "Failed to revoke admin" });
   }
 });
 

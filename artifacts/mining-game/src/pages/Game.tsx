@@ -25,8 +25,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Zap, TriangleAlert, MessageSquare, SendHorizonal, ZoomIn, ZoomOut, Server, Package, ShoppingCart, Trophy } from "lucide-react";
+import { Zap, TriangleAlert, MessageSquare, SendHorizonal, ZoomIn, ZoomOut, Server, Package, ShoppingCart, Trophy, ShieldOff } from "lucide-react";
 import StructurePopup    from "@/components/game/StructurePopup";
+import { useAdBlockDetect } from "@/hooks/useAdBlockDetect";
 import MinerWindow       from "@/components/game/MinerWindow";
 import InventoryWindow   from "@/components/game/InventoryWindow";
 import StoreWindow       from "@/components/game/StoreWindow";
@@ -1330,6 +1331,10 @@ export default function Game({ worldName }: GameProps) {
   const joystickBaseRef   = useRef({ x: 0, y: 0 });
   const JOYSTICK_R        = 34; // max thumb travel from center (px)
 
+  // ── Adblocker detection — blocks mining if true ───────────────────────────
+  // Runs once on mount; reports result to the server for admin visibility.
+  const adBlockDetected = useAdBlockDetect();
+
   // ── UI state ──────────────────────────────────────────────────────────────
   const [mode,          setMode]         = useState<"punch" | "place">("punch");
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
@@ -1562,7 +1567,8 @@ export default function Game({ worldName }: GameProps) {
   const sendChat = () => {
     const ws = wsRef.current;
     if (!chatInput.trim() || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ username, message: chatInput.trim() }));
+    // Include userId so the server can enforce mute status
+    ws.send(JSON.stringify({ userId, username, message: chatInput.trim() }));
     setChatInput("");
   };
 
@@ -2373,6 +2379,9 @@ export default function Game({ worldName }: GameProps) {
   // Click coordinates must be converted through zoom + camera to world coords.
   // ════════════════════════════════════════════════════════════════════════
   const handleCanvasClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Block all mining interaction when an adblocker is active
+    if (adBlockDetected) return;
+
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
@@ -3390,6 +3399,28 @@ export default function Game({ worldName }: GameProps) {
           </div>
         )}
       </div>
+
+      {/* ── ADBLOCKER DETECTED OVERLAY ────────────────────────────────────
+           Full-screen lock shown when bait-element detection fires.
+           Mining is already blocked in handleCanvasClick above; this
+           overlay makes the reason visible to the user.              */}
+      {adBlockDetected && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm pointer-events-auto select-none">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-xl border border-destructive/60 bg-black/80 max-w-xs text-center">
+            <ShieldOff className="w-12 h-12 text-destructive animate-pulse" />
+            <h2 className="text-destructive font-black text-lg uppercase tracking-widest">
+              Adblocker Detected
+            </h2>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              MineVault is free to play and supported by ads.
+              Please disable your adblocker to mine blocks.
+            </p>
+            <p className="text-xs text-muted-foreground/60 uppercase tracking-widest">
+              Reload the page after disabling to continue
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── WIZARD CHALLENGE MODAL (anti-cheat) ─────────────────────────── */}
       <Dialog open={wizard} onOpenChange={setWizard}>

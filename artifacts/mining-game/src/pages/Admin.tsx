@@ -20,7 +20,8 @@ import { useLocation } from "wouter";
 import {
   ShieldAlert, RefreshCw, Gem, Package, Thermometer, Zap,
   Fuel, Star, Trash2, ChevronDown, ChevronUp, Clock, Play,
-  AlertTriangle, CheckCircle2,
+  AlertTriangle, CheckCircle2, Ban, ShieldCheck, ShieldOff,
+  MessageSquareOff, MessageSquare, UserX, UserCheck,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,11 @@ interface PlayerRow {
   temperature: number;
   is_running: boolean;
   miner_unlocked: boolean;
+  // Moderation fields — added by startup migrations
+  adblock_detected: boolean;
+  is_banned: boolean;
+  is_muted: boolean;
+  is_admin: boolean;
 }
 
 // ── Miner state shape returned by GET /api/admin/miner-state ─────────────
@@ -349,9 +355,10 @@ export default function Admin() {
                   <th className="text-left py-1.5 pr-3">ID</th>
                   <th className="text-left py-1.5 pr-3">Username</th>
                   <th className="text-right py-1.5 pr-3">Gems</th>
-                  <th className="text-right py-1.5 pr-3">Rig Lvl</th>
+                  <th className="text-right py-1.5 pr-3">Lvl</th>
                   <th className="text-right py-1.5 pr-3">Temp</th>
-                  <th className="text-right py-1.5">Status</th>
+                  <th className="text-right py-1.5 pr-3">Rig</th>
+                  <th className="text-right py-1.5">Flags</th>
                 </tr>
               </thead>
               <tbody>
@@ -361,24 +368,55 @@ export default function Admin() {
                     className={`cursor-pointer border-b border-border/40 transition-colors ${
                       selectedUserId === p.id
                         ? "bg-yellow-500/10 text-yellow-300"
+                        : p.is_banned
+                        ? "bg-red-950/30 hover:bg-red-950/50"
                         : "hover:bg-accent/10"
                     }`}
                   >
                     <td className="py-1.5 pr-3">{p.id}</td>
-                    <td className="py-1.5 pr-3 font-bold">{p.username}</td>
+                    <td className="py-1.5 pr-3 font-bold">
+                      {p.username}
+                      {/* Inline role badge next to name */}
+                      {p.is_admin && (
+                        <span className="ml-1.5 px-1 py-0 rounded text-[9px] bg-yellow-500/20 text-yellow-400 uppercase">admin</span>
+                      )}
+                    </td>
                     <td className="py-1.5 pr-3 text-right text-primary">{p.gems}</td>
                     <td className="py-1.5 pr-3 text-right">{p.miner_level}</td>
                     <td className={`py-1.5 pr-3 text-right ${p.temperature >= 100 ? "text-red-400" : p.temperature > 70 ? "text-orange-400" : ""}`}>
                       {Math.round(p.temperature)}°C
                     </td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 pr-3 text-right">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase ${
                         p.miner_unlocked && p.is_running ? "bg-green-500/20 text-green-400"
                         : p.miner_unlocked ? "bg-red-500/20 text-red-400"
                         : "bg-zinc-500/20 text-zinc-400"
                       }`}>
-                        {p.miner_unlocked ? (p.is_running ? "running" : "overheated") : "locked"}
+                        {p.miner_unlocked ? (p.is_running ? "run" : "hot") : "off"}
                       </span>
+                    </td>
+                    {/* Moderation flag badges */}
+                    <td className="py-1.5 text-right">
+                      <div className="flex gap-1 justify-end flex-wrap">
+                        {p.adblock_detected && (
+                          <span title="Adblocker detected"
+                            className="px-1.5 py-0.5 rounded text-[9px] uppercase bg-orange-500/20 text-orange-400 font-bold">
+                            ADB
+                          </span>
+                        )}
+                        {p.is_banned && (
+                          <span title="Banned"
+                            className="px-1.5 py-0.5 rounded text-[9px] uppercase bg-red-500/30 text-red-400 font-bold">
+                            BAN
+                          </span>
+                        )}
+                        {p.is_muted && (
+                          <span title="Muted"
+                            className="px-1.5 py-0.5 rounded text-[9px] uppercase bg-zinc-500/30 text-zinc-400 font-bold">
+                            MUT
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -391,15 +429,28 @@ export default function Admin() {
             {players.map((p) => (
               <div key={p.id} onClick={() => setSelectedUserId(p.id)}
                 className={`cursor-pointer rounded border p-2 transition-colors ${
-                  selectedUserId === p.id ? "border-yellow-500/50 bg-yellow-500/10" : "border-border bg-black/30"
+                  selectedUserId === p.id ? "border-yellow-500/50 bg-yellow-500/10"
+                  : p.is_banned ? "border-red-800/50 bg-red-950/30"
+                  : "border-border bg-black/30"
                 }`}>
-                <div className="flex justify-between">
-                  <span className="font-bold text-sm">{p.username}</span>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="font-bold text-sm">{p.username}</span>
+                    {p.is_admin && <span className="ml-1 text-[9px] bg-yellow-500/20 text-yellow-400 px-1 rounded uppercase">admin</span>}
+                  </div>
                   <span className="text-primary text-xs">{p.gems} gems</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
                   Lvl {p.miner_level} · {Math.round(p.temperature)}°C · {p.is_running ? "running" : "stopped"}
                 </div>
+                {/* Flag row — only shown when flags are set */}
+                {(p.adblock_detected || p.is_banned || p.is_muted) && (
+                  <div className="flex gap-1 mt-1 flex-wrap">
+                    {p.adblock_detected && <span className="px-1 py-0 rounded text-[9px] bg-orange-500/20 text-orange-400 uppercase font-bold">adblock</span>}
+                    {p.is_banned && <span className="px-1 py-0 rounded text-[9px] bg-red-500/30 text-red-400 uppercase font-bold">banned</span>}
+                    {p.is_muted && <span className="px-1 py-0 rounded text-[9px] bg-zinc-500/30 text-zinc-400 uppercase font-bold">muted</span>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -757,6 +808,123 @@ export default function Admin() {
               Add Points
             </Button>
           </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* ════════════════════════════════════════════════════════════════════
+          MODERATION — ban, mute, and admin management
+          Ban   → player cannot log in (shown as BAN badge in table)
+          Mute  → player cannot send chat messages
+          Admin → player gets access to the admin panel
+                  (only root admin can grant/revoke admin)
+      ════════════════════════════════════════════════════════════════════ */}
+      <CollapsibleSection icon={<ShieldAlert className="w-4 h-4 text-red-400" />}
+        title="Moderation" sectionKey="moderation"
+        open={openSection === "moderation"} onToggle={toggleSection}>
+        <div className="space-y-4">
+          {!selectedUserId && (
+            <p className="text-xs text-muted-foreground italic">Select a player above first.</p>
+          )}
+
+          {selectedUserId && (
+            <>
+              {/* ── Ban / Unban ────────────────────────────────────── */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Account Ban</p>
+                <p className="text-xs text-muted-foreground">
+                  Banned accounts cannot log in — they see an error at the login screen.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm"
+                    className="text-xs bg-red-700 text-white hover:bg-red-600 border border-red-600/50"
+                    disabled={!selectedUserId || selectedPlayer?.is_banned}
+                    onClick={() => quickAction("/api/admin/ban-user", `${selectedPlayer?.username} banned`)}>
+                    <UserX className="w-3 h-3 mr-1" /> Ban Account
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    className="text-xs border-green-500/40 text-green-400 hover:bg-green-500/10"
+                    disabled={!selectedUserId || !selectedPlayer?.is_banned}
+                    onClick={() => quickAction("/api/admin/unban-user", `${selectedPlayer?.username} unbanned`)}>
+                    <UserCheck className="w-3 h-3 mr-1" /> Unban
+                  </Button>
+                </div>
+                {selectedPlayer?.is_banned && (
+                  <p className="text-[11px] text-red-400 flex items-center gap-1">
+                    <Ban className="w-3 h-3" /> This player is currently banned.
+                  </p>
+                )}
+              </div>
+
+              {/* ── Mute / Unmute ─────────────────────────────────── */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Chat Mute</p>
+                <p className="text-xs text-muted-foreground">
+                  Muted players can still play but cannot send chat messages.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm"
+                    className="text-xs bg-zinc-700 text-white hover:bg-zinc-600 border border-zinc-500/50"
+                    disabled={!selectedUserId || selectedPlayer?.is_muted}
+                    onClick={() => quickAction("/api/admin/mute-user", `${selectedPlayer?.username} muted`)}>
+                    <MessageSquareOff className="w-3 h-3 mr-1" /> Mute
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    className="text-xs border-zinc-400/40 text-zinc-300 hover:bg-zinc-500/10"
+                    disabled={!selectedUserId || !selectedPlayer?.is_muted}
+                    onClick={() => quickAction("/api/admin/unmute-user", `${selectedPlayer?.username} unmuted`)}>
+                    <MessageSquare className="w-3 h-3 mr-1" /> Unmute
+                  </Button>
+                </div>
+                {selectedPlayer?.is_muted && (
+                  <p className="text-[11px] text-zinc-400 flex items-center gap-1">
+                    <MessageSquareOff className="w-3 h-3" /> This player is currently muted.
+                  </p>
+                )}
+              </div>
+
+              {/* ── Grant / Revoke Admin ──────────────────────────── */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Admin Access</p>
+                <p className="text-xs text-muted-foreground">
+                  Only the root admin ({localStorage.getItem("username") ?? "admin"}) can grant or revoke admin powers.
+                  Granted admins can use all admin panel features except granting further admin.
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm"
+                    className="text-xs bg-yellow-600 text-black hover:bg-yellow-500 border border-yellow-500/50"
+                    disabled={!selectedUserId || selectedPlayer?.is_admin}
+                    onClick={() => quickAction("/api/admin/grant-admin", `${selectedPlayer?.username} is now admin`)}>
+                    <ShieldCheck className="w-3 h-3 mr-1" /> Grant Admin
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    className="text-xs border-yellow-600/40 text-yellow-500 hover:bg-yellow-600/10"
+                    disabled={!selectedUserId || !selectedPlayer?.is_admin}
+                    onClick={() => quickAction("/api/admin/revoke-admin", `${selectedPlayer?.username} admin revoked`)}>
+                    <ShieldOff className="w-3 h-3 mr-1" /> Revoke Admin
+                  </Button>
+                </div>
+                {selectedPlayer?.is_admin && (
+                  <p className="text-[11px] text-yellow-400 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" /> This player has admin access.
+                  </p>
+                )}
+              </div>
+
+              {/* ── Adblock status ────────────────────────────────── */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Adblocker Status</p>
+                <div className={`rounded border px-3 py-2 text-xs flex items-center gap-2 ${
+                  selectedPlayer?.adblock_detected
+                    ? "border-orange-500/40 bg-orange-500/10 text-orange-300"
+                    : "border-green-500/30 bg-green-500/5 text-green-400"
+                }`}>
+                  {selectedPlayer?.adblock_detected
+                    ? <><Ban className="w-3 h-3 shrink-0" /> Adblocker detected — this player cannot mine.</>
+                    : <><CheckCircle2 className="w-3 h-3 shrink-0" /> No adblocker detected.</>}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </CollapsibleSection>
 

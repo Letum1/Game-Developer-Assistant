@@ -75,7 +75,8 @@ router.post("/auth/login", async (req, res) => {
   try {
     const hash = crypto.createHash("sha256").update(password).digest("hex");
     const result = await pool.query(
-      "SELECT id, username FROM users WHERE username = $1 AND password_hash = $2",
+      // Also fetch is_banned and is_admin — added by startup migrations
+      "SELECT id, username, COALESCE(is_banned, false) AS is_banned, COALESCE(is_admin, false) AS is_admin FROM users WHERE username = $1 AND password_hash = $2",
       [username, hash]
     );
     if (result.rows.length === 0) {
@@ -83,12 +84,22 @@ router.post("/auth/login", async (req, res) => {
       return;
     }
     const user = result.rows[0];
-    // Include isAdmin flag so the frontend can unlock the admin panel
+
+    // Banned users cannot log in — show a clear message
+    if (user.is_banned) {
+      res.status(403).json({ error: "Your account has been banned. Contact support if you believe this is a mistake." });
+      return;
+    }
+
+    // isAdmin: true if username is the env-configured root admin OR
+    // the DB `is_admin` flag was granted by the root admin
+    const isAdmin = user.username === ADMIN_USERNAME || user.is_admin === true;
+
     res.json({
       success: true,
       userId: user.id,
       username: user.username,
-      isAdmin: user.username === ADMIN_USERNAME,
+      isAdmin,
     });
   } catch (err) {
     req.log.error({ err }, "Login error");
