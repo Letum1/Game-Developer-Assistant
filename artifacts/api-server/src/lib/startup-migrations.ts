@@ -18,6 +18,15 @@ const MIGRATIONS: string[] = [
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned         BOOLEAN NOT NULL DEFAULT FALSE",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_muted          BOOLEAN NOT NULL DEFAULT FALSE",
   "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin          BOOLEAN NOT NULL DEFAULT FALSE",
+
+  // Rotating Black Market shop — stores current stock per item
+  // item_id is the PK; wiped and rerolled every 10 minutes by initStoreRestock()
+  `CREATE TABLE IF NOT EXISTS store_stock (
+    item_id        TEXT        PRIMARY KEY,
+    quantity       INTEGER     NOT NULL DEFAULT 0,
+    restock_number INTEGER     NOT NULL DEFAULT 1,
+    restocked_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
 ];
 
 /**

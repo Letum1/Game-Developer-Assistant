@@ -8,6 +8,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { startPassiveTicker } from "./lib/passive-ticker";
 import { runStartupMigrations } from "./lib/startup-migrations";
+import { initStoreRestock } from "./routes/store";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,10 +38,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ── Run idempotent startup migrations (adds any missing DB columns) ────────
-runStartupMigrations().catch((err) =>
-  logger.error({ err }, "Startup migrations threw unexpectedly"),
-);
+// ── Run startup migrations, then initialise the rotating shop timer ─────────
+// initStoreRestock() must run AFTER migrations so the store_stock table exists.
+runStartupMigrations()
+  .then(() => initStoreRestock())
+  .catch((err) => logger.error({ err }, "Startup migrations threw unexpectedly"));
 
 // ── API routes ─────────────────────────────────────────────────────────────
 app.use("/api", router);

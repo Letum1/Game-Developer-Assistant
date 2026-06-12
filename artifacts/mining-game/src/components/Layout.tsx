@@ -1,17 +1,84 @@
-import { ReactNode } from "react";
+// ============================================================
+// Layout.tsx — App shell with sidebar (desktop) + bottom nav (mobile)
+//
+// Restock notifications: polls GET /api/store every 60 s. When a
+// new restock is detected (restockNumber increases), shows a toast
+// and lights up a pulsing dot on the "Shop" nav item until visited.
+// ============================================================
+
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Gamepad2, Server, Backpack, Store, Trophy, LogOut, Hammer, Wallet, ShieldAlert } from "lucide-react";
+import {
+  Gamepad2, Server, Backpack, Store, Trophy, LogOut,
+  Hammer, Wallet, ShieldAlert,
+} from "lucide-react";
 import { useGetWallet, getGetWalletQueryKey } from "@workspace/api-client-react";
+import { useToast } from "@/hooks/use-toast";
 import AdBanner from "./AdBanner";
+
+type NavItem = {
+  href:   string;
+  icon:   React.ElementType;
+  label:  string;
+  badge?: boolean; // pulsing notification dot
+};
 
 export default function Layout({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
-  const { data: wallet } = useGetWallet({
+  const { data: wallet }        = useGetWallet({
     query: { enabled: !!localStorage.getItem("userId"), queryKey: getGetWalletQueryKey() },
   });
+  const { toast } = useToast();
 
-  // isAdmin is stored in localStorage at login — the server sets it based on ADMIN_USERNAME env var.
   const isAdmin = localStorage.getItem("isAdmin") === "true";
+
+  // ── Restock notification state ──────────────────────────────────────────────
+  // hasNewRestock → lights up the "Shop" dot until the user visits /store
+  const [hasNewRestock, setHasNewRestock] = useState(false);
+  const lastRestockNumRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const check = async () => {
+      const uid = localStorage.getItem("userId");
+      if (!uid) return;
+      try {
+        const res  = await fetch("/api/store");
+        const data = await res.json() as { restockNumber: number; items: { rarity: string; displayName: string; quantity: number }[] };
+        const num  = data.restockNumber;
+
+        if (lastRestockNumRef.current !== null && num > lastRestockNumRef.current) {
+          // New restock — show a toast and light up the nav badge
+          setHasNewRestock(true);
+          const hot = data.items.filter((i) => i.rarity === "ultra" || i.rarity === "rare");
+          if (hot.length > 0) {
+            toast({
+              title:       "⚡ RARE RESTOCK!",
+              description: hot.slice(0, 3).map((i) => `${i.displayName} ×${i.quantity}`).join("  ·  "),
+              className:   "bg-purple-950 border-purple-400 text-purple-100 font-mono",
+            });
+          } else {
+            toast({
+              title:       "🏪 Shop Restocked!",
+              description: "New items available in the Black Market.",
+              className:   "bg-black border-primary text-primary font-mono",
+            });
+          }
+        }
+        lastRestockNumRef.current = num;
+      } catch {
+        // Network error — silently ignore, will retry on next poll
+      }
+    };
+
+    check();
+    const iv = setInterval(check, 60_000);
+    return () => clearInterval(iv);
+  }, [toast]);
+
+  // Clear the notification dot when the user navigates to the store
+  useEffect(() => {
+    if (location === "/store") setHasNewRestock(false);
+  }, [location]);
 
   const logout = () => {
     localStorage.removeItem("userId");
@@ -20,21 +87,21 @@ export default function Layout({ children }: { children: ReactNode }) {
     setLocation("/");
   };
 
-  const navItems = [
-    { href: "/game",        icon: Gamepad2,    label: "Game"      },
-    { href: "/craft",       icon: Hammer,      label: "Craft"     },
-    { href: "/miner",       icon: Server,      label: "Miner"     },
-    { href: "/wallet",      icon: Wallet,      label: "Wallet"    },
-    { href: "/inventory",   icon: Backpack,    label: "Items"     },
-    { href: "/store",       icon: Store,       label: "Store"     },
-    { href: "/leaderboard", icon: Trophy,      label: "Board"     },
-    // Admin panel only visible to the admin user — hidden from normal players
+  const navItems: NavItem[] = [
+    { href: "/game",        icon: Gamepad2,    label: "Game"  },
+    { href: "/craft",       icon: Hammer,      label: "Craft" },
+    { href: "/miner",       icon: Server,      label: "Miner" },
+    { href: "/wallet",      icon: Wallet,      label: "Wallet" },
+    { href: "/inventory",   icon: Backpack,    label: "Items" },
+    { href: "/store",       icon: Store,       label: "Shop",  badge: hasNewRestock },
+    { href: "/leaderboard", icon: Trophy,      label: "Board" },
     ...(isAdmin ? [{ href: "/admin", icon: ShieldAlert, label: "Admin" }] : []),
   ];
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground font-mono">
-      {/* Desktop Sidebar */}
+
+      {/* ── Desktop Sidebar ── */}
       <aside className="hidden md:flex flex-col w-56 border-r border-border bg-sidebar/50 backdrop-blur-sm shrink-0">
         <div className="p-5 border-b border-border">
           <h1 className="text-xl font-black text-primary drop-shadow-[0_0_8px_rgba(34,197,94,0.5)] tracking-tighter uppercase">
@@ -53,7 +120,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center space-x-3 px-3 py-2.5 rounded transition-all text-sm ${
+              className={`relative flex items-center space-x-3 px-3 py-2.5 rounded transition-all text-sm ${
                 location === item.href
                   ? "bg-primary/15 text-primary border border-primary/40 drop-shadow-[0_0_5px_rgba(34,197,94,0.2)]"
                   : "hover:bg-accent/10 text-muted-foreground hover:text-accent"
@@ -61,6 +128,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               <item.icon className="w-4 h-4 shrink-0" />
               <span className="font-bold tracking-wider uppercase text-xs">{item.label}</span>
+              {/* Restock notification dot */}
+              {item.badge && (
+                <span className="ml-auto w-2 h-2 rounded-full bg-purple-400 animate-pulse shrink-0" />
+              )}
             </Link>
           ))}
         </nav>
@@ -76,9 +147,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* ── Main Content ── */}
       <main className="flex-1 flex flex-col relative overflow-hidden min-w-0">
-        {/* Mobile Header — title left, gems + logout right */}
+        {/* Mobile Header */}
         <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-sidebar/80 backdrop-blur z-10 shrink-0">
           <h1 className="text-lg font-black text-primary drop-shadow-[0_0_8px_rgba(34,197,94,0.5)] uppercase tracking-tighter">
             MINEVAULT
@@ -87,7 +158,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             {wallet && (
               <span className="font-bold text-primary text-sm">{wallet.gems} 💎</span>
             )}
-            {/* Logout button — visible on mobile only; desktop uses the sidebar button */}
             <button
               onClick={logout}
               className="flex items-center gap-1 text-muted-foreground hover:text-destructive transition-colors p-1"
@@ -99,15 +169,12 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {/* Content area — reserves 116px on mobile (60px banner + 56px nav),
-            60px on desktop (banner only, no bottom nav). */}
+        {/* Content area */}
         <div className="flex-1 overflow-hidden relative z-0 min-h-0 flex flex-col pb-[116px] md:pb-[60px]">
           {children}
         </div>
 
-        {/* ── Ad Banner — fixed 60px strip just above the mobile bottom nav ─── */}
-        {/* z-10 keeps it above page content but below the nav (z-20).          */}
-        {/* On desktop it anchors to the very bottom of the content column.     */}
+        {/* Ad Banner */}
         <div className="absolute bottom-14 md:bottom-0 left-0 right-0 z-10" style={{ height: 60 }}>
           <AdBanner />
         </div>
@@ -118,7 +185,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex flex-col items-center justify-center px-1 h-full space-y-0.5 ${
+              className={`relative flex flex-col items-center justify-center px-1 h-full space-y-0.5 ${
                 location === item.href
                   ? "text-primary drop-shadow-[0_0_5px_rgba(34,197,94,0.5)]"
                   : "text-muted-foreground"
@@ -126,6 +193,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               <item.icon className="w-4 h-4" />
               <span className="text-[9px] font-bold uppercase">{item.label}</span>
+              {/* Restock dot on mobile */}
+              {item.badge && (
+                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+              )}
             </Link>
           ))}
         </nav>

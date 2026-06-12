@@ -2,3 +2,4 @@
 - [pg PoolClient typing](pg-poolclient-typing.md) — avoid Awaited<ReturnType<typeof pool.connect>>; import PoolClient directly instead
 - [Multi-world system](multi-world.md) — Growtopia-style named worlds with seeded terrain + player position persistence architecture
 - [NaN serializes as null in JSON](nan-json-null-gotcha.md) — missing constant → NaN → JSON null → null.toFixed() crash; always guard server numeric fields with ?? 0 on the client
+- [Rotating shop system](rotating-shop.md) — store_stock table, in-memory timer, initStoreRestock() wired after migrations in app.ts; machine blocks shop-only

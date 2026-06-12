@@ -21,18 +21,21 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Hammer, CheckCircle, XCircle, ChevronRight, Cpu, Zap, Cable } from "lucide-react";
+import { Hammer, CheckCircle, XCircle, ChevronRight, Cpu, Zap, Store } from "lucide-react";
 import { Link } from "wouter";
 
 // ─── Crafting recipes shown in the UI ────────────────────────────────────────
-// Group 1: Machine building blocks (the new Minecraft-redstone style system)
-// Group 2: Support / maintenance items
+// IMPORTANT: Machine blocks (Mining Rig, Solar Panel, Generator, Battery, Fan,
+// Data Cable) are now ONLY available from the rotating Black Market shop.
+// This workbench handles only:
+//   Group 1: One-time unlock (Data Center Rig certificate)
+//   Group 2: Support / maintenance items (cooling, platforms)
 const RECIPES = [
   // ── Step 0: Data Center Rig — one-time unlock certificate ────────────────
   // This is NOT a placeable block. Crafting it:
   //   1. Adds a "Data Center Rig" item to your inventory (proof of rig)
   //   2. Fires the server-side `unlocksMiner` flag → Miner page becomes active
-  // You only need to craft this ONCE. Then craft Machine Core blocks separately.
+  // You only need to craft this ONCE. Then buy machine blocks from the Shop.
   {
     recipe: "data_center_rig",
     displayName: "Data Center Rig",
@@ -44,114 +47,9 @@ const RECIPES = [
     ],
     key: true,
     machine: true,
-    unlock: true,   // special flag: this is the one-time miner unlock item
+    unlock: true,   // special flag: one-time miner unlock item
     emoji: "🖥️",
-    hint: "Craft ONCE to unlock the Miner page — then craft Machine Core blocks to place in the world",
-  },
-
-  // ── Mining Rig hardware (the actual TH-generating blocks) ────────────────
-  // Each block placed = 1 TH of compute. Needs 1 power unit to run.
-  // If power supply < total rigs, excess rigs stay offline.
-  {
-    recipe: "mining_rig",
-    displayName: "Mining Rig",
-    description: "ASIC mining hardware. Each block = 1 TH. Needs 1 power unit — if not enough electricity, the rig won't run. Build more Solar Panels or Generators to power more rigs.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 3, label: "Raw Iron" },
-      { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
-    ],
-    key: true,
-    machine: true,
-    emoji: "⛏️",
-    hint: "Needs 1 power unit each — underpower = offline rigs",
-  },
-
-  // ── Cooling Fan (reduces temperature rise in the cluster) ─────────────────
-  {
-    recipe: "fan_block",
-    displayName: "Cooling Fan",
-    description: "Industrial cooling fan. Each fan block cuts temperature rise by 2.5°C/hr. 4 fans = rig stays cool indefinitely at base load. Crafts 2 at once.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 2, label: "Raw Iron" },
-    ],
-    machine: true,
-    emoji: "💨",
-    hint: "4 fans = no more overheating at base rig load",
-  },
-
-  // ── Machine building components ─────────────────────────────────────────
-  {
-    recipe: "machine_core",
-    displayName: "Machine Core",
-    description: "The CPU block of your Data Rig. Place it in the world, then put Solar Panels next to it to start passive earning.",
-    ingredients: [
-      { itemId: "raw_iron",    quantity: 5, label: "Raw Iron"    },
-      { itemId: "raw_gold",    quantity: 2, label: "Raw Gold"    },
-      { itemId: "raw_diamond", quantity: 1, label: "Raw Diamond" },
-    ],
-    key: true,          // key item — highlighted prominently
-    machine: true,      // machine component flag for styling
-    emoji: "⚙️",
-    hint: "Placeable block — put in world → add Solar Panels to power it",
-  },
-  {
-    recipe: "solar_panel_block",
-    displayName: "Solar Panel Block",
-    description: "Power source for your Machine Core. Each panel placed adjacent to the core increases your miner level and earning rate.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 2, label: "Raw Iron" },
-      { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
-    ],
-    key: true,
-    machine: true,
-    emoji: "☀️",
-    hint: "Place touching Machine Core to boost rate",
-  },
-  {
-    recipe: "data_cable",
-    displayName: "Data Cable",
-    description: "Extends your machine network — connect Machine Cores to Solar Panels across gaps. Crafts 3 at once.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 1, label: "Raw Iron" },
-    ],
-    machine: true,
-    emoji: "〜",
-    hint: "Bridges components that aren't directly adjacent",
-  },
-
-  // ── Battery Block — stores solar energy so the rig runs 24/7 ────────────
-  // +1 power unit, always-on. Charges from solar panels during the day.
-  // Ingredients must match server CRAFTING_RECIPES["battery_block"].
-  {
-    recipe: "battery_block",
-    displayName: "Battery Block",
-    description: "Stores solar energy during the day and keeps the rig running at night. Connect via Data Cables to Machine Core.",
-    ingredients: [
-      { itemId: "raw_iron", quantity: 3, label: "Raw Iron" },
-      { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
-    ],
-    key: true,
-    machine: true,
-    emoji: "🔋",
-    hint: "Always-on +1 power — charges from solar during day",
-  },
-
-  // ── Generator Block — diesel-powered, day-and-night power source ─────────
-  // +2 power units, always-on. Requires diesel_can items to run.
-  // Ingredients must match server CRAFTING_RECIPES["generator_block"].
-  {
-    recipe: "generator_block",
-    displayName: "Generator Block",
-    description: "Always-on diesel power — works day AND night. Connect to Machine Core via Data Cables. Buy Diesel Cans from Store to refuel.",
-    ingredients: [
-      { itemId: "raw_iron",    quantity: 5, label: "Raw Iron"    },
-      { itemId: "raw_gold",    quantity: 2, label: "Raw Gold"    },
-      { itemId: "raw_diamond", quantity: 1, label: "Raw Diamond" },
-    ],
-    key: true,
-    machine: true,
-    emoji: "⚡",
-    hint: "Always-on +2 power — tap block in game to refuel with Diesel Can",
+    hint: "Craft ONCE to unlock the Miner page — then buy machine blocks from the Black Market Shop",
   },
 
   // ── Support / maintenance items ─────────────────────────────────────────
@@ -159,7 +57,7 @@ const RECIPES = [
   {
     recipe: "water_bucket",
     displayName: "Water Bucket",
-    description: "Flush cooling water to reset your miner temperature gauge.",
+    description: "Flush cooling water to reset your miner temperature gauge. Also available in the Shop.",
     ingredients: [
       { itemId: "raw_iron", quantity: 1, label: "Raw Iron" },
     ],
@@ -168,7 +66,7 @@ const RECIPES = [
   {
     recipe: "thermal_paste",
     displayName: "Thermal Paste",
-    description: "Apply to reduce miner core temperature by 30°C.",
+    description: "Apply to reduce miner core temperature by 30°C. Also available in the Shop.",
     ingredients: [
       { itemId: "raw_gold", quantity: 1, label: "Raw Gold" },
     ],
@@ -277,27 +175,27 @@ export default function Craft() {
             <Cpu className="w-8 h-8 text-primary shrink-0 mt-0.5" />
             <div className="space-y-1.5 text-xs text-muted-foreground leading-relaxed">
               <p className="text-primary font-bold uppercase tracking-widest text-[10px] mb-2">How to Build Your Data Rig</p>
-              {/* Step-by-step build guide — 4 steps now that Rig and Machine Core are separate */}
+              {/* Step-by-step build guide — machine blocks now come from the rotating shop */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
                   <div className="text-2xl">⛏️</div>
                   <div className="text-primary font-bold text-[10px] uppercase">Step 1: Mine</div>
-                  <div className="text-[10px]">Break iron, gold, diamond blocks in the world to gather raw resources</div>
+                  <div className="text-[10px]">Break iron, gold, diamond blocks to gather raw resources and gems</div>
                 </div>
                 <div className="bg-black/40 rounded border border-primary/30 p-2 text-center space-y-1">
                   <div className="text-2xl">🖥️</div>
                   <div className="text-primary font-bold text-[10px] uppercase">Step 2: Unlock</div>
                   <div className="text-[10px]">Craft a <strong>Data Center Rig</strong> (one-time only) to unlock the Miner page</div>
                 </div>
-                <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
-                  <div className="text-2xl">⚙️</div>
-                  <div className="text-primary font-bold text-[10px] uppercase">Step 3: Craft</div>
-                  <div className="text-[10px]">Craft <strong>Machine Core</strong> + Solar Panel Blocks — these are the placeable parts</div>
+                <div className="bg-black/40 rounded border border-purple-500/30 p-2 text-center space-y-1">
+                  <div className="text-2xl">🏪</div>
+                  <div className="text-purple-300 font-bold text-[10px] uppercase">Step 3: Shop</div>
+                  <div className="text-[10px]">Buy <strong>Machine Blocks</strong> from the Black Market — restocks every 10 min</div>
                 </div>
                 <div className="bg-black/40 rounded border border-primary/20 p-2 text-center space-y-1">
                   <div className="text-2xl">☀️</div>
                   <div className="text-primary font-bold text-[10px] uppercase">Step 4: Place</div>
-                  <div className="text-[10px]">Drop Machine Core in the world, place Solar Panels touching it to start earning!</div>
+                  <div className="text-[10px]">Place Machine Core in the world, connect power blocks via Data Cables!</div>
                 </div>
               </div>
               {/* Power formula — must match game.ts scanMachineCluster and Miner.tsx MAX_LEVEL */}
@@ -307,6 +205,30 @@ export default function Craft() {
                 <span className="text-orange-400">Generator Block = +2 levels</span>. Max level: 9. Use Data Cables to bridge gaps.
               </p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Machine blocks → Shop redirect banner ────────────────────────── */}
+      {/* Machine blocks (Mining Rig, Solar Panel, Battery, Generator, Fan, Cable)
+          are no longer craftable — they're exclusive to the rotating shop. */}
+      <Card className="border-purple-500/40 bg-purple-950/10">
+        <CardContent className="pt-4 pb-3">
+          <div className="flex items-center gap-3">
+            <Store className="w-6 h-6 text-purple-400 shrink-0" />
+            <div>
+              <p className="text-purple-300 font-bold uppercase tracking-widest text-[10px]">Machine Blocks → Black Market Shop</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Mining Rigs, Solar Panels, Generators, Batteries, Cooling Fans and Data Cables are now
+                available exclusively in the rotating shop — restocking every 10 minutes with random quantities.
+                Rare items like Mining Rigs appear infrequently, so check back often!
+              </p>
+            </div>
+            <Link href="/store">
+              <button className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-purple-300 border border-purple-500/50 rounded px-2 py-1 hover:bg-purple-500/10 transition-colors whitespace-nowrap">
+                Go to Shop →
+              </button>
+            </Link>
           </div>
         </CardContent>
       </Card>
