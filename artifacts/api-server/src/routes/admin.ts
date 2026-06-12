@@ -424,22 +424,38 @@ router.get("/admin/miner-state", async (req, res) => {
     const temp          = parseFloat(m.temperature);
 
     const {
-      TEMP_RISE_PER_HOUR, FAN_COOLING_PER_HOUR, MAX_TEMP, MINER_RATES,
+      HEAT_PER_RIG_PER_HOUR,
+      HEAT_PER_BATTERY_PER_HOUR,
+      HEAT_PER_GENERATOR_PER_HOUR,
+      FAN_COOLING_PER_HOUR,
+      MIN_HEAT_PER_HOUR,
+      MAX_TEMP,
+      MINER_RATES,
     } = await import("../lib/game-constants");
 
-    const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+    // Max power supply (all sources counted; actual active depends on day/night + charge/fuel)
+    const generatorActive   = generators > 0 && fuel > 0;
+    const powerSupply       = solarPanels + batteries + generators;
+    const activeRigs        = Math.min(rigCount, powerSupply);
+    const ratePerSec        = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
 
-    // Seconds until miner hits MAX_TEMP (null = fans keep it cool or already overheated)
-    const secsToOverheat = effectiveTempRise > 0 && temp < MAX_TEMP
+    // Per-appliance heat model — mirrors the passive-tick logic in miner.ts
+    const heatFromRigs       = activeRigs * HEAT_PER_RIG_PER_HOUR;
+    const heatFromBatteries  = batteries  * HEAT_PER_BATTERY_PER_HOUR;
+    const heatFromGenerators = generatorActive ? generators * HEAT_PER_GENERATOR_PER_HOUR : 0;
+    const rawHeat            = heatFromRigs + heatFromBatteries + heatFromGenerators;
+    // MIN_HEAT_PER_HOUR ensures overheat is always eventually inevitable
+    const effectiveTempRise  = Math.max(
+      MIN_HEAT_PER_HOUR,
+      rawHeat - fans * FAN_COOLING_PER_HOUR,
+    );
+
+    // Seconds until miner hits MAX_TEMP (null = already overheated)
+    const secsToOverheat = temp < MAX_TEMP
       ? ((MAX_TEMP - temp) / effectiveTempRise) * 3600
       : null;
 
     const secsSinceLastTick = (Date.now() - new Date(m.last_tick_at).getTime()) / 1000;
-
-    // Max power supply (all sources available — actual depends on day/night + charge/fuel)
-    const powerSupply = solarPanels + batteries + generators;
-    const activeRigs  = Math.min(rigCount, powerSupply);
-    const ratePerSec  = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
 
     res.json({
       userId: m.user_id,
@@ -505,8 +521,11 @@ router.post("/admin/simulate-time", async (req, res) => {
     const m = result.rows[0];
     const {
       MINER_RATES,
-      TEMP_RISE_PER_HOUR,
+      HEAT_PER_RIG_PER_HOUR,
+      HEAT_PER_BATTERY_PER_HOUR,
+      HEAT_PER_GENERATOR_PER_HOUR,
       FAN_COOLING_PER_HOUR,
+      MIN_HEAT_PER_HOUR,
       MAX_TEMP,
       MAX_BATTERY_CHARGE,
       MAX_FUEL,
@@ -541,8 +560,18 @@ router.post("/admin/simulate-time", async (req, res) => {
     let newBalance = parseFloat(m.current_balance);
     let newTemp    = temp;
 
-    const rate              = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
-    const effectiveTempRise = Math.max(0, TEMP_RISE_PER_HOUR - fans * FAN_COOLING_PER_HOUR);
+    const rate = MINER_RATES[Math.min(activeRigs, 9)] ?? MINER_RATES[9] ?? 0;
+
+    // Per-appliance heat model — mirrors the passive-tick logic in miner.ts
+    const heatFromRigs       = activeRigs * HEAT_PER_RIG_PER_HOUR;
+    const heatFromBatteries  = batteries  * HEAT_PER_BATTERY_PER_HOUR;
+    const heatFromGenerators = generatorActive ? generators * HEAT_PER_GENERATOR_PER_HOUR : 0;
+    const rawHeat            = heatFromRigs + heatFromBatteries + heatFromGenerators;
+    // MIN_HEAT_PER_HOUR floor ensures overheat is always eventually inevitable
+    const effectiveTempRise  = Math.max(
+      MIN_HEAT_PER_HOUR,
+      rawHeat - fans * FAN_COOLING_PER_HOUR,
+    );
 
     // ── Figure out the EARLIEST stopping event within the window ─────────────
     // The miner stops when temp hits MAX_TEMP OR power runs out (fuel empty / battery dead).

@@ -305,7 +305,7 @@ export default function Admin() {
         title: `Simulated ${fmtSecs(secs)}`,
         description: data.simulated.overheated
           ? "🔥 Miner overheated!"
-          : `+${data.simulated.earned.toFixed(8)} balance earned`,
+          : `+${(data.simulated.earned ?? 0).toFixed(8)} balance earned`,
         variant: data.simulated.overheated ? "destructive" : "default",
       });
       // Refresh the live state so panel reflects new temp/balance
@@ -491,8 +491,8 @@ export default function Admin() {
                   {/* Temperature gauge */}
                   <StatBox
                     label="Temperature"
-                    value={`${minerState.temperature.toFixed(1)}°C`}
-                    sub={`+${minerState.effectiveTempRise.toFixed(0)}°C/hr`}
+                    value={`${(minerState.temperature ?? 0).toFixed(1)}°C`}
+                    sub={`+${(minerState.effectiveTempRise ?? 0).toFixed(0)}°C/hr`}
                     color={minerState.temperature >= 100 ? "red" : minerState.temperature > 70 ? "orange" : "green"}
                   />
                   {/* Time since last tick */}
@@ -516,8 +516,8 @@ export default function Admin() {
                   {/* Balance */}
                   <StatBox
                     label="Balance"
-                    value={minerState.currentBalance.toFixed(6)}
-                    sub={`${(minerState.ratePerSec * 86400).toFixed(4)}/day`}
+                    value={(minerState.currentBalance ?? 0).toFixed(6)}
+                    sub={`${((minerState.ratePerSec ?? 0) * 86400).toFixed(4)}/day`}
                     color="primary"
                   />
                   {/* Running status */}
@@ -582,9 +582,9 @@ export default function Admin() {
 
                   {/* Stats grid */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
-                    <span>Temp: {simResult.oldTemp.toFixed(1)}°C → <strong>{simResult.newTemp.toFixed(1)}°C</strong></span>
+                    <span>Temp: {(simResult.oldTemp ?? 0).toFixed(1)}°C → <strong>{(simResult.newTemp ?? 0).toFixed(1)}°C</strong></span>
                     <span>Still running: <strong>{simResult.isRunning ? "Yes ✅" : "No ❌"}</strong></span>
-                    <span>Earned: <strong>+{simResult.earned.toFixed(8)}</strong></span>
+                    <span>Earned: <strong>+{(simResult.earned ?? 0).toFixed(8)}</strong></span>
                     <span>Fuel: {simResult.oldFuel} → {simResult.newFuel}</span>
                   </div>
                 </div>

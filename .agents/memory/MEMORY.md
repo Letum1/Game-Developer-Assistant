@@ -1,3 +1,4 @@
 - [Production mode setup](production-mode.md) — Express 5 wildcard bug + how to run the game in production mode for fast mobile loads
 - [pg PoolClient typing](pg-poolclient-typing.md) — avoid Awaited<ReturnType<typeof pool.connect>>; import PoolClient directly instead
 - [Multi-world system](multi-world.md) — Growtopia-style named worlds with seeded terrain + player position persistence architecture
+- [NaN serializes as null in JSON](nan-json-null-gotcha.md) — missing constant → NaN → JSON null → null.toFixed() crash; always guard server numeric fields with ?? 0 on the client
